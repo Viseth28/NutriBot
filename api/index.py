@@ -1678,7 +1678,7 @@ async def handle_telegram_update(payload: dict):
                         with get_db_connection() as conn:
                             cursor = conn.cursor()
                             cursor.execute(
-                                "SELECT id FROM burn_logs WHERE user_id = ? AND activity_name = ? AND source = 'Google Fit'",
+                                "SELECT 1 FROM burn_logs WHERE user_id = ? AND activity_name = ? AND source = 'Google Fit'",
                                 (user_id, act_key)
                             )
                             if cursor.fetchone():
@@ -2588,7 +2588,7 @@ async def fetch_latest_fit_session(user_id: int) -> dict:
         
     import datetime
     seven_days_ago = datetime.datetime.utcnow() - datetime.timedelta(days=7)
-    start_time_iso = seven_days_ago.isoformat() + "Z"
+    start_time_iso = seven_days_ago.strftime("%Y-%m-%dT%H:%M:%S.000Z")
     
     headers = {
         "Authorization": f"Bearer {access_token}",
@@ -2638,7 +2638,7 @@ async def fetch_latest_fit_session(user_id: int) -> dict:
             valid_sessions = []
             for s in sessions:
                 act_type = s.get("activityType")
-                if act_type in activity_names:
+                if act_type in activity_names and s.get("endTimeMillis") is not None:
                     valid_sessions.append(s)
                     
             if not valid_sessions:
@@ -2647,8 +2647,8 @@ async def fetch_latest_fit_session(user_id: int) -> dict:
             valid_sessions.sort(key=lambda x: int(x.get("endTimeMillis", 0)), reverse=True)
             latest_session = valid_sessions[0]
             
-            start_ms = int(latest_session["startTimeMillis"])
-            end_ms = int(latest_session["endTimeMillis"])
+            start_ms = int(latest_session.get("startTimeMillis", 0))
+            end_ms = int(latest_session.get("endTimeMillis", 0))
             act_type = latest_session["activityType"]
             act_name = activity_names[act_type]
             session_name = latest_session.get("name", act_name)
@@ -2656,7 +2656,8 @@ async def fetch_latest_fit_session(user_id: int) -> dict:
             cal_payload = {
                 "aggregateBy": [{"dataTypeName": "com.google.calories.expended"}],
                 "startTimeMillis": start_ms,
-                "endTimeMillis": end_ms
+                "endTimeMillis": end_ms,
+                "bucketByActivityType": {}
             }
             
             cal_resp = await client.post("https://www.googleapis.com/fitness/v1/users/me/dataset:aggregate", headers=headers, json=cal_payload)
