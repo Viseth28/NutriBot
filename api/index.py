@@ -2461,19 +2461,19 @@ async def fetch_fit_exercises_today(user_id: int) -> list[dict]:
         return []
         
     # Calculate start and end of Cambodia local date 'today' (ICT, UTC+7)
-    now_utc = datetime.datetime.utcnow()
+    now_utc = datetime.datetime.now(datetime.timezone.utc)
     now_cambodia = now_utc + datetime.timedelta(hours=7)
     
     # Today 00:00:00 local time
-    start_local = datetime.datetime(now_cambodia.year, now_cambodia.month, now_cambodia.day, 0, 0, 0)
+    start_local = datetime.datetime(now_cambodia.year, now_cambodia.month, now_cambodia.day, 0, 0, 0, tzinfo=datetime.timezone.utc)
     # Today 23:59:59 local time
-    end_local = datetime.datetime(now_cambodia.year, now_cambodia.month, now_cambodia.day, 23, 59, 59)
+    end_local = datetime.datetime(now_cambodia.year, now_cambodia.month, now_cambodia.day, 23, 59, 59, tzinfo=datetime.timezone.utc)
     
     # Convert local times to UTC by subtracting 7 hours
     start_utc = start_local - datetime.timedelta(hours=7)
     end_utc = end_local - datetime.timedelta(hours=7)
     
-    # Milliseconds since epoch
+    # Milliseconds since epoch (explicit timezone-aware timestamp conversion)
     start_millis = int(start_utc.timestamp() * 1000)
     end_millis = int(end_utc.timestamp() * 1000)
     
@@ -2529,8 +2529,9 @@ async def fetch_fit_exercises_today(user_id: int) -> list[dict]:
             for bucket in data.get("bucket", []):
                 activity_type = bucket.get("activityType")
                 
-                # Skip non-exercise activity types
-                if activity_type in [0, 3, 4, 72]:
+                # STRICT WHITELIST: Only import exercises explicitly listed in our active dictionary.
+                # This completely filters out sleeping, resting, still, BMR, or generic unmapped types.
+                if activity_type not in activity_names:
                     continue
                     
                 calories_burned = 0
@@ -2543,7 +2544,7 @@ async def fetch_fit_exercises_today(user_id: int) -> list[dict]:
                                 calories_burned += value["intVal"]
                                 
                 if calories_burned >= 1:
-                    act_name = activity_names.get(activity_type, f"ហាត់ប្រាណ (Code {activity_type})")
+                    act_name = activity_names[activity_type]
                     exercises.append({
                         "activity_type": activity_type,
                         "activity_name": act_name,
