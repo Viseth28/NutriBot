@@ -1736,7 +1736,8 @@ async def handle_telegram_update(payload: dict):
                     error_msg = (
                         "⚠️ <b>ការទាញយកទិន្នន័យបានបរាជ័យ</b>\n"
                         "━━━━━━━━━━━━━━━━━━━━\n"
-                        "មានបញ្ហាកំហុសបច្គេកទេសក្នុងការទាញយកលំហាត់ប្រាណចុងក្រោយពី Google Fit។ សូមព្យាយាមម្តងទៀត ឬកត់ត្រាដោយផ្ទាល់៖ <b>/burn [ចំនួនកាឡូរី]</b>"
+                        f"កំហុសបច្ចេកទេស៖\n<code>{fit_err}</code>\n\n"
+                        "សូមព្យាយាមម្តងទៀត ឬកត់ត្រាដោយផ្ទាល់៖ <b>/burn [ចំនួនកាឡូរី]</b>"
                     )
                     if loading_msg_id:
                         await bot.edit_message(chat_id, loading_msg_id, error_msg)
@@ -2603,8 +2604,7 @@ async def fetch_latest_fit_session(user_id: int) -> dict:
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.get(sessions_url, headers=headers)
             if resp.status_code != 200:
-                print(f"Google Fit sessions API failed: {resp.text}")
-                return None
+                raise Exception(f"Google Fit sessions API returned status {resp.status_code}: {resp.text}")
                 
             data = resp.json()
             sessions = data.get("session", [])
@@ -2710,7 +2710,7 @@ async def fetch_latest_fit_session(user_id: int) -> dict:
             }
     except Exception as e:
         print(f"Error fetching latest Google Fit session: {e}")
-    return None
+        raise e
 
 @app.get("/api/fit/auth")
 async def fit_auth(user_id: int):
