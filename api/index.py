@@ -1588,6 +1588,34 @@ async def handle_telegram_update(payload: dict):
                     "សូមផ្តល់ទម្រង់ម៉ោង <b>HH:MM</b> (២៤ម៉ោង)។ ឧទាហរណ៍៖ <b>/reminder 08:00</b> ឬ <b>/reminder 19:30</b>"
                 )
             return
+            
+        elif text.startswith("/debugdb"):
+            try:
+                with get_db_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT datetime('now'), datetime('now', '+7 hours'), date('now', '+7 hours')")
+                    time_row = cursor.fetchone()
+                    
+                    cursor.execute("SELECT burn_id, calories_burned, timestamp, date(timestamp, '+7 hours'), activity_name FROM burn_logs ORDER BY timestamp DESC LIMIT 5")
+                    rows = cursor.fetchall()
+                    
+                    logs_str = ""
+                    for r in rows:
+                        logs_str += f"ID: {r[0]} | Cal: {r[1]} | UTC: {r[2]} | Shifted: {r[3]} | {r[4]}\n"
+                        
+                    reply = (
+                        "🔍 <b>Database Debug Log</b>\n"
+                        "━━━━━━━━━━━━━━━━━━━━\n"
+                        f"<b>UTC Now:</b> {time_row[0]}\n"
+                        f"<b>Shifted Now:</b> {time_row[1]}\n"
+                        f"<b>Shifted Date:</b> {time_row[2]}\n\n"
+                        "<b>Last 5 Burn Logs:</b>\n"
+                        f"<code>{logs_str}</code>"
+                    )
+                    await bot.send_message(chat_id, reply)
+            except Exception as e:
+                await bot.send_message(chat_id, f"Debug error: {e}")
+            return
 
         elif text.startswith("/stats"):
             goal = db_get_user_goal(user_id)
