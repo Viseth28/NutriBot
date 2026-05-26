@@ -1,0 +1,15 @@
+{
+  "version": 2,
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "/api/index.py"
+    }
+  ],
+  "crons": [
+    {
+      "path": "/api/cron_reminders",
+      "schedule": "*/10 * * * *"
+    }
+  ]
+}
