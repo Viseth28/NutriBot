@@ -232,11 +232,11 @@ def db_delete_today_meals(user_id: int):
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(
-            "DELETE FROM meals WHERE user_id = ? AND date(timestamp) = date('now')",
+            "DELETE FROM meals WHERE user_id = ? AND date(timestamp, '+7 hours') = date('now', '+7 hours')",
             (user_id,)
         )
         cursor.execute(
-            "DELETE FROM burn_logs WHERE user_id = ? AND date(timestamp) = date('now')",
+            "DELETE FROM burn_logs WHERE user_id = ? AND date(timestamp, '+7 hours') = date('now', '+7 hours')",
             (user_id,)
         )
         conn.commit()
@@ -311,7 +311,7 @@ def db_get_today_burn(user_id: int) -> int:
         with get_db_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT SUM(calories_burned) FROM burn_logs WHERE user_id = ? AND date(timestamp) = date('now')",
+                "SELECT SUM(calories_burned) FROM burn_logs WHERE user_id = ? AND date(timestamp, '+7 hours') = date('now', '+7 hours')",
                 (user_id,)
             )
             row = cursor.fetchone()
@@ -416,7 +416,7 @@ def db_get_today_meals(user_id: int) -> tuple[list[dict], int]:
                 """
                 SELECT food_name, calories, protein, fat, carbs, sugar, timestamp
                 FROM meals
-                WHERE user_id = ? AND date(timestamp) = date('now')
+                WHERE user_id = ? AND date(timestamp, '+7 hours') = date('now', '+7 hours')
                 ORDER BY timestamp DESC
                 """,
                 (user_id,)
@@ -2610,7 +2610,7 @@ async def fetch_latest_fit_session(user_id: int) -> dict:
             sessions = data.get("session", [])
             
             if not sessions:
-                return None
+                raise Exception("Google Fit returned 0 sessions in the last 7 days. Please make sure you have pulled down to refresh on the Google Fit app's Journal tab to force a sync.")
                 
             activity_names = {
                 1: "ជិះកង់ (Biking)",
@@ -2644,7 +2644,16 @@ async def fetch_latest_fit_session(user_id: int) -> dict:
                     valid_sessions.append(s)
                     
             if not valid_sessions:
-                return None
+                session_list = []
+                for s in sessions[:5]:
+                    name = s.get("name", "Unknown")
+                    act_val = s.get("activityType", "Unknown")
+                    has_end = "Yes" if s.get("endTimeMillis") is not None else "No"
+                    session_list.append(f"• '{name}' (Type: {act_val}, Finished: {has_end})")
+                raise Exception(
+                    f"Found {len(sessions)} sessions, but none matched whitelisted activity types or were finished.\n"
+                    + "\n".join(session_list)
+                )
                 
             valid_sessions.sort(key=lambda x: int(x.get("endTimeMillis", 0)), reverse=True)
             latest_session = valid_sessions[0]
