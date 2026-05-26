@@ -1689,8 +1689,9 @@ async def handle_telegram_update(payload: dict):
                                 "✅ <b>លំហាត់ប្រាណនេះត្រូវបានកត់ត្រារួចហើយ</b>\n"
                                 "━━━━━━━━━━━━━━━━━━━━\n"
                                 f"🚴 <b>សកម្មភាព៖</b> <b>{session['session_name']}</b>\n"
-                                f"📅 <b>កាលបរិច្ឆេទ៖</b> <b>{session['date_str']}</b>\n"
-                                f"🔥 <b>ថាមពល៖</b> <b>{session['calories']} kcal</b>\n"
+                                f"🔥 <b>ដុតកាឡូរី៖</b> <b>{session['calories']} kcal</b>\n"
+                                f"⏲ <b>ពេលវេលា</b> <b>{session['duration']}mins</b>\n"
+                                f"🗾 <b>ចម្ងាយ</b> <b>{session['distance']}km</b>\n"
                                 "━━━━━━━━━━━━━━━━━━━━\n"
                                 "លំហាត់ប្រាណចុងក្រោយរបស់អ្នក ត្រូវបានកត់ត្រារក្សាទុករួចរាល់នៅក្នុងប្រព័ន្ធហើយ! 😉"
                             )
@@ -1706,8 +1707,9 @@ async def handle_telegram_update(payload: dict):
                                 "🔥 <b>បានទាញយកលំហាត់ប្រាណចុងក្រោយជោគជ័យ!</b>\n"
                                 "━━━━━━━━━━━━━━━━━━━━\n"
                                 f"🚴 <b>សកម្មភាព៖</b> <b>{session['session_name']}</b>\n"
-                                f"📅 <b>កាលបរិច្ឆេទ៖</b> <b>{session['date_str']}</b>\n"
-                                f"🔥 <b>ថាមពល៖</b> <b>{session['calories']} kcal</b>\n"
+                                f"🔥 <b>ដុតកាឡូរី៖</b> <b>{session['calories']} kcal</b>\n"
+                                f"⏲ <b>ពេលវេលា</b> <b>{session['duration']}mins</b>\n"
+                                f"🗾 <b>ចម្ងាយ</b> <b>{session['distance']}km</b>\n"
                                 "━━━━━━━━━━━━━━━━━━━━\n"
                                 "សកម្មភាពនេះត្រូវបានបន្ថែមទៅក្នុងកំណត់ត្រាដុតកាឡូរីថ្ងៃនេះរបស់អ្នករួចរាល់ហើយ! 💪"
                             )
@@ -2653,29 +2655,44 @@ async def fetch_latest_fit_session(user_id: int) -> dict:
             act_name = activity_names[act_type]
             session_name = latest_session.get("name", act_name)
             
+            # If the session has 0 or extremely short duration, expand the query range to get calories
+            query_start = start_ms
+            query_end = end_ms
+            if query_end - query_start < 60000: # less than 1 minute
+                # Expand search window to 1 hour before the session end to catch any data points written
+                query_start = query_end - 3600 * 1000
+                
             cal_payload = {
-                "aggregateBy": [{"dataTypeName": "com.google.calories.expended"}],
-                "startTimeMillis": start_ms,
-                "endTimeMillis": end_ms,
+                "aggregateBy": [
+                    {"dataTypeName": "com.google.calories.expended"},
+                    {"dataTypeName": "com.google.distance.delta"}
+                ],
+                "startTimeMillis": query_start,
+                "endTimeMillis": query_end,
                 "bucketByActivityType": {}
             }
             
             cal_resp = await client.post("https://www.googleapis.com/fitness/v1/users/me/dataset:aggregate", headers=headers, json=cal_payload)
             calories_burned = 0
+            distance_meters = 0
             if cal_resp.status_code == 200:
                 cal_data = cal_resp.json()
                 for bucket in cal_data.get("bucket", []):
-                    for dataset in bucket.get("dataset", []):
-                        for point in dataset.get("point", []):
+                    datasets = bucket.get("dataset", [])
+                    if len(datasets) > 0:
+                        for point in datasets[0].get("point", []):
                             for value in point.get("value", []):
-                                if "fpVal" in value:
-                                    calories_burned += value["fpVal"]
-                                elif "intVal" in value:
-                                    calories_burned += value["intVal"]
+                                calories_burned += value.get("fpVal", value.get("intVal", 0))
+                    if len(datasets) > 1:
+                        for point in datasets[1].get("point", []):
+                            for value in point.get("value", []):
+                                distance_meters += value.get("fpVal", value.get("intVal", 0))
+            
+            duration_minutes = (end_ms - start_ms) / 60000.0
+            display_duration = int(duration_minutes) if duration_minutes >= 1.0 else 30
             
             if calories_burned < 1:
-                duration_minutes = (end_ms - start_ms) / 60000.0
-                calories_burned = int(duration_minutes * 6.5)
+                calories_burned = int(display_duration * 6.5)
                 
             end_dt_utc = datetime.datetime.utcfromtimestamp(end_ms / 1000.0)
             end_dt_kh = end_dt_utc + datetime.timedelta(hours=7)
@@ -2686,6 +2703,8 @@ async def fetch_latest_fit_session(user_id: int) -> dict:
                 "activity_name": act_name,
                 "session_name": session_name,
                 "calories": int(calories_burned),
+                "duration": display_duration,
+                "distance": round(distance_meters / 1000.0, 1),
                 "date_str": date_str,
                 "end_ms": end_ms
             }
