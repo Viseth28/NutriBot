@@ -2508,6 +2508,7 @@ async def fetch_fit_exercises_today(user_id: int) -> list[dict]:
             
             activity_names = {
                 1: "ជិះកង់ (Biking)",
+                2: "ហាត់ប្រាណ Calisthenics",
                 7: "ដើរ (Walking)",
                 8: "រត់ (Running)",
                 9: "អេរ៉ូប៊ិក (Aerobics)",
@@ -2521,8 +2522,12 @@ async def fetch_fit_exercises_today(user_id: int) -> list[dict]:
                 35: "ដើរភ្នំ (Hiking)",
                 53: "អុំទូក (Rowing)",
                 58: "រត់លើម៉ាស៊ីន (Treadmill Running)",
+                97: "លើកទម្ងន់ (Weight Lifting)",
                 100: "ហែលទឹក (Swimming)",
+                108: "ហាត់ប្រាណទូទៅ (Workout)",
+                113: "ហាត់ប្រាណ Fitness",
                 114: "យូហ្គា (Yoga)",
+                115: "ម៉ាស៊ីន Elliptical",
                 116: "Zumba"
             }
             
