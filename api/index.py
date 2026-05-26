@@ -1663,47 +1663,63 @@ async def handle_telegram_update(payload: dict):
                     )
                     return
                 
-                # Connected, let's fetch today's exercises
-                loading_msg = await bot.send_message(chat_id, "🔄 <i>កំពុងទាញយកទិន្នន័យហាត់ប្រាណពី Google Fit... សូមរង់ចាំមួយភ្លែត។</i>")
+                # Connected, let's fetch the latest session
+                loading_msg = await bot.send_message(chat_id, "🔄 <i>កំពុងទាញយកលំហាត់ប្រាណចុងក្រោយពី Google Fit... សូមរង់ចាំមួយភ្លែត។</i>")
                 loading_msg_id = loading_msg.get("result", {}).get("message_id")
                 
                 try:
-                    exercises = await fetch_fit_exercises_today(user_id)
-                    if exercises:
-                        # Clear today's Google Fit logs first to avoid double counting
+                    session = await fetch_latest_fit_session(user_id)
+                    if session:
+                        # Construct a unique key for the activity_name to prevent duplicates
+                        act_key = f"{session['session_name']} ({session['date_str']})"
+                        
+                        # Check if this exact session has already been logged in database
+                        is_duplicate = False
                         with get_db_connection() as conn:
                             cursor = conn.cursor()
                             cursor.execute(
-                                "DELETE FROM burn_logs WHERE user_id = ? AND date(timestamp) = date('now') AND source = 'Google Fit'",
-                                (user_id,)
+                                "SELECT id FROM burn_logs WHERE user_id = ? AND activity_name = ? AND source = 'Google Fit'",
+                                (user_id, act_key)
                             )
-                            conn.commit()
-                            
-                        total_burned_today = 0
-                        exercise_lines = []
-                        for ex in exercises:
-                            db_add_burn(user_id, ex["calories"], ex["activity_name"], "Google Fit")
-                            total_burned_today += ex["calories"]
-                            exercise_lines.append(f"• {ex['activity_name']}៖ <b>{ex['calories']} kcal</b>")
-                            
-                        summary_card = (
-                            "🔥 <b>បានទាញយកទិន្នន័យពី Google Fit ជោគជ័យ!</b>\n"
-                            "━━━━━━━━━━━━━━━━━━━━\n"
-                            "🚴 <b>សកម្មភាពហាត់ប្រាណថ្ងៃនេះ៖</b>\n"
-                            + "\n".join(exercise_lines) + "\n"
-                            "━━━━━━━━━━━━━━━━━━━━\n"
-                            f"💪 <b>សរុបដុតកាឡូរី៖</b> <b>{total_burned_today} kcal</b>\n\n"
-                            "កំណត់ត្រាដុតកាឡូរីត្រូវបានធ្វើបច្ចុប្បន្នភាពរួចរាល់! 🎉"
-                        )
-                        if loading_msg_id:
-                            await bot.edit_message(chat_id, loading_msg_id, summary_card)
+                            if cursor.fetchone():
+                                is_duplicate = True
+                                
+                        if is_duplicate:
+                            duplicate_card = (
+                                "✅ <b>លំហាត់ប្រាណនេះត្រូវបានកត់ត្រារួចហើយ</b>\n"
+                                "━━━━━━━━━━━━━━━━━━━━\n"
+                                f"🚴 <b>សកម្មភាព៖</b> <b>{session['session_name']}</b>\n"
+                                f"📅 <b>កាលបរិច្ឆេទ៖</b> <b>{session['date_str']}</b>\n"
+                                f"🔥 <b>ថាមពល៖</b> <b>{session['calories']} kcal</b>\n"
+                                "━━━━━━━━━━━━━━━━━━━━\n"
+                                "លំហាត់ប្រាណចុងក្រោយរបស់អ្នក ត្រូវបានកត់ត្រារក្សាទុករួចរាល់នៅក្នុងប្រព័ន្ធហើយ! 😉"
+                            )
+                            if loading_msg_id:
+                                await bot.edit_message(chat_id, loading_msg_id, duplicate_card)
+                            else:
+                                await bot.send_message(chat_id, duplicate_card)
                         else:
-                            await bot.send_message(chat_id, summary_card)
+                            # Not a duplicate, log it!
+                            db_add_burn(user_id, session['calories'], act_key, "Google Fit")
+                            
+                            success_card = (
+                                "🔥 <b>បានទាញយកលំហាត់ប្រាណចុងក្រោយជោគជ័យ!</b>\n"
+                                "━━━━━━━━━━━━━━━━━━━━\n"
+                                f"🚴 <b>សកម្មភាព៖</b> <b>{session['session_name']}</b>\n"
+                                f"📅 <b>កាលបរិច្ឆេទ៖</b> <b>{session['date_str']}</b>\n"
+                                f"🔥 <b>ថាមពល៖</b> <b>{session['calories']} kcal</b>\n"
+                                "━━━━━━━━━━━━━━━━━━━━\n"
+                                "សកម្មភាពនេះត្រូវបានបន្ថែមទៅក្នុងកំណត់ត្រាដុតកាឡូរីថ្ងៃនេះរបស់អ្នករួចរាល់ហើយ! 💪"
+                            )
+                            if loading_msg_id:
+                                await bot.edit_message(chat_id, loading_msg_id, success_card)
+                            else:
+                                await bot.send_message(chat_id, success_card)
                     else:
                         fail_msg = (
                             "⚠️ <b>មិនឃើញទិន្នន័យហាត់ប្រាណក្នុង Google Fit!</b>\n"
                             "━━━━━━━━━━━━━━━━━━━━\n"
-                            "រកមិនឃើញទិន្នន័យហាត់ប្រាណ ឬដុតកាឡូរីពី Google Fit សម្រាប់ថ្ងៃនេះនៅឡើយទេ។\n\n"
+                            "រកមិនឃើញកំណត់ត្រាលំហាត់ប្រាណ ឬសកម្មភាពហាត់ប្រាណ (សកម្មភាព ៧ថ្ងៃចុងក្រោយ) នៅក្នុងគណនី Google Fit របស់អ្នកឡើយទេ។\n\n"
                             "💡 <b>ដំណោះស្រាយ៖</b>\n"
                             "1. សូមប្រាកដថានាឡិកា ឬកម្មវិធីសុខភាពរបស់អ្នកបាន Sync ជាមួយ Google Fit រួចរាល់។\n"
                             "2. អ្នកអាចកត់ត្រាដោយផ្ទាល់ដោយវាយ៖ <b>/burn [ចំនួនកាឡូរី]</b>\n"
@@ -1714,11 +1730,11 @@ async def handle_telegram_update(payload: dict):
                         else:
                             await bot.send_message(chat_id, fail_msg)
                 except Exception as fit_err:
-                    print(f"Error fetching fit exercises inside command: {fit_err}")
+                    print(f"Error fetching latest fit session inside command: {fit_err}")
                     error_msg = (
                         "⚠️ <b>ការទាញយកទិន្នន័យបានបរាជ័យ</b>\n"
                         "━━━━━━━━━━━━━━━━━━━━\n"
-                        "មានបញ្ហាកំហុសបច្ចេកទេសក្នុងការទាញយកទិន្នន័យពី Google Fit។ សូមព្យាយាមម្តងទៀត ឬកត់ត្រាដោយផ្ទាល់៖ <b>/burn [ចំនួនកាឡូរី]</b>"
+                        "មានបញ្ហាកំហុសបច្គេកទេសក្នុងការទាញយកលំហាត់ប្រាណចុងក្រោយពី Google Fit។ សូមព្យាយាមម្តងទៀត ឬកត់ត្រាដោយផ្ទាល់៖ <b>/burn [ចំនួនកាឡូរី]</b>"
                     )
                     if loading_msg_id:
                         await bot.edit_message(chat_id, loading_msg_id, error_msg)
@@ -2559,6 +2575,122 @@ async def fetch_fit_exercises_today(user_id: int) -> list[dict]:
     except Exception as e:
         print(f"Error fetching today's exercises from Google Fit: {e}")
     return []
+
+async def fetch_latest_fit_session(user_id: int) -> dict:
+    """Fetches the single most recent exercise session and its exact calories from Google Fit."""
+    token_info = db_get_fit_tokens(user_id)
+    if not token_info:
+        return None
+        
+    access_token = await get_valid_fit_token(user_id, token_info)
+    if not access_token:
+        return None
+        
+    import datetime
+    seven_days_ago = datetime.datetime.utcnow() - datetime.timedelta(days=7)
+    start_time_iso = seven_days_ago.isoformat() + "Z"
+    
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json"
+    }
+    
+    sessions_url = f"https://www.googleapis.com/fitness/v1/users/me/sessions?startTime={start_time_iso}"
+    
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(sessions_url, headers=headers)
+            if resp.status_code != 200:
+                print(f"Google Fit sessions API failed: {resp.text}")
+                return None
+                
+            data = resp.json()
+            sessions = data.get("session", [])
+            
+            if not sessions:
+                return None
+                
+            activity_names = {
+                1: "ជិះកង់ (Biking)",
+                2: "ហាត់ប្រាណ Calisthenics",
+                7: "ដើរ (Walking)",
+                8: "រត់ (Running)",
+                9: "អេរ៉ូប៊ិក (Aerobics)",
+                10: "វាយសី (Badminton)",
+                11: "បេស្បល (Baseball)",
+                12: "បាល់បោះ (Basketball)",
+                20: "ប្រដាល់ (Boxing)",
+                24: "រាំ (Dancing)",
+                31: "ធ្វើសួន (Gardening)",
+                32: "វាយកូនហ្គោល (Golf)",
+                35: "ដើរភ្នំ (Hiking)",
+                53: "អុំទូក (Rowing)",
+                58: "រត់លើម៉ាស៊ីន (Treadmill Running)",
+                97: "លើកទម្ងន់ (Weight Lifting)",
+                100: "ហែលទឹក (Swimming)",
+                108: "ហាត់ប្រាណទូទៅ (Workout)",
+                113: "ហាត់ប្រាណ Fitness",
+                114: "យូហ្គា (Yoga)",
+                115: "ម៉ាស៊ីន Elliptical",
+                116: "Zumba"
+            }
+            
+            valid_sessions = []
+            for s in sessions:
+                act_type = s.get("activityType")
+                if act_type in activity_names:
+                    valid_sessions.append(s)
+                    
+            if not valid_sessions:
+                return None
+                
+            valid_sessions.sort(key=lambda x: int(x.get("endTimeMillis", 0)), reverse=True)
+            latest_session = valid_sessions[0]
+            
+            start_ms = int(latest_session["startTimeMillis"])
+            end_ms = int(latest_session["endTimeMillis"])
+            act_type = latest_session["activityType"]
+            act_name = activity_names[act_type]
+            session_name = latest_session.get("name", act_name)
+            
+            cal_payload = {
+                "aggregateBy": [{"dataTypeName": "com.google.calories.expended"}],
+                "startTimeMillis": start_ms,
+                "endTimeMillis": end_ms
+            }
+            
+            cal_resp = await client.post("https://www.googleapis.com/fitness/v1/users/me/dataset:aggregate", headers=headers, json=cal_payload)
+            calories_burned = 0
+            if cal_resp.status_code == 200:
+                cal_data = cal_resp.json()
+                for bucket in cal_data.get("bucket", []):
+                    for dataset in bucket.get("dataset", []):
+                        for point in dataset.get("point", []):
+                            for value in point.get("value", []):
+                                if "fpVal" in value:
+                                    calories_burned += value["fpVal"]
+                                elif "intVal" in value:
+                                    calories_burned += value["intVal"]
+            
+            if calories_burned < 1:
+                duration_minutes = (end_ms - start_ms) / 60000.0
+                calories_burned = int(duration_minutes * 6.5)
+                
+            end_dt_utc = datetime.datetime.utcfromtimestamp(end_ms / 1000.0)
+            end_dt_kh = end_dt_utc + datetime.timedelta(hours=7)
+            date_str = end_dt_kh.strftime("%d-%m-%Y %I:%M %p")
+            
+            return {
+                "activity_type": act_type,
+                "activity_name": act_name,
+                "session_name": session_name,
+                "calories": int(calories_burned),
+                "date_str": date_str,
+                "end_ms": end_ms
+            }
+    except Exception as e:
+        print(f"Error fetching latest Google Fit session: {e}")
+    return None
 
 @app.get("/api/fit/auth")
 async def fit_auth(user_id: int):
