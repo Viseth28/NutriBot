@@ -117,6 +117,15 @@ def startup_event():
                 updated_at TEXT DEFAULT CURRENT_TIMESTAMP
             );
             """)
+            cursor.execute("""
+            CREATE TABLE IF NOT EXISTS strava_tokens (
+                user_id INTEGER PRIMARY KEY,
+                access_token TEXT,
+                refresh_token TEXT,
+                expires_at REAL,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+            """)
             try:
                 cursor.execute("ALTER TABLE users ADD COLUMN daily_calorie_budget INTEGER DEFAULT 2000;")
             except Exception:
@@ -302,6 +311,53 @@ def db_delete_fit_tokens(user_id: int):
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("DELETE FROM google_fit_tokens WHERE user_id = ?", (user_id,))
+        conn.commit()
+
+def db_save_strava_tokens(user_id: int, access_token: str, refresh_token: str, expires_at: float):
+    """Saves or updates Strava OAuth tokens for a user."""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT OR REPLACE INTO strava_tokens (user_id, access_token, refresh_token, expires_at, updated_at)
+            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+            """,
+            (user_id, access_token, refresh_token, expires_at)
+        )
+        conn.commit()
+
+def db_update_strava_access_token(user_id: int, access_token: str, expires_at: float):
+    """Updates Strava access token and expiry time without overwriting the refresh token."""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE strava_tokens SET access_token = ?, expires_at = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?",
+            (access_token, expires_at, user_id)
+        )
+        conn.commit()
+
+def db_get_strava_tokens(user_id: int) -> dict:
+    """Retrieves Strava OAuth tokens for a user, or None if not connected."""
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT access_token, refresh_token, expires_at FROM strava_tokens WHERE user_id = ?", (user_id,))
+            row = cursor.fetchone()
+            if row:
+                return {
+                    "access_token": row[0],
+                    "refresh_token": row[1],
+                    "expires_at": row[2]
+                }
+    except Exception as e:
+        print(f"Error getting strava tokens for {user_id}: {e}")
+    return None
+
+def db_delete_strava_tokens(user_id: int):
+    """Deletes Strava tokens for a user (disconnecting)."""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM strava_tokens WHERE user_id = ?", (user_id,))
         conn.commit()
 
 def db_get_today_burn(user_id: int) -> int:
@@ -1139,6 +1195,22 @@ async def handle_telegram_update(payload: dict):
                 await bot.answer_callback_query(callback_id, "⚠️ បរាជ័យក្នុងការផ្តាច់ពី Google Fit។", show_alert=True)
             return
 
+
+        # 5b. Handle Disconnecting Strava
+        elif callback_data == "disconnect_strava":
+            try:
+                db_delete_strava_tokens(user_id)
+                await bot.answer_callback_query(callback_id, "🔌 បានផ្តាច់ការភ្ជាប់ Strava!")
+                disconnect_text = (
+                    "🔌 <b>បានផ្តាច់ពី Strava រួចរាល់!</b>\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n"
+                    "គណនីរបស់អ្នកត្រូវបានផ្តាច់ចេញពី Strava ហើយ។ ប្រសិនបើចង់ភ្ជាប់ឡើងវិញ សូមប្រើប្រាស់បញ្ជា <b>/strava</b> ម្តងទៀត។"
+                )
+                await bot.edit_message(chat_id, message_id, disconnect_text, reply_markup={"inline_keyboard": []})
+            except Exception as disc_err:
+                print(f"Error disconnecting Strava: {disc_err}")
+                await bot.answer_callback_query(callback_id, "⚠️ បរាជ័យក្នុងការផ្តាច់ពី Strava។", show_alert=True)
+            return
     # Process standard text or photo messages
     message = payload.get("message")
     if not message:
@@ -1267,6 +1339,7 @@ async def handle_telegram_update(payload: dict):
                 "• 🥤 /nosweet — កត់ត្រាថាអ្នកមិនបានញ៉ាំភេសជ្ជៈផ្អែមថ្ងៃនេះ (No Sweet Drink Challenge)។\n"
                 "• ⚖️ /weight <b>&lt;ទម្ងន់ថ្មី&gt;</b> — មើល ឬធ្វើបច្ចុប្បន្នភាពទម្ងន់របស់អ្នក និងគណនាគោលដៅ TDEE ឡើងវិញស្វ័យប្រវត្ត (ឧទាហរណ៍៖ <b>/weight ៧៥.៥</b>)។\n"
                 "• 🧬 /cal — គណនា BMR/TDEE និងកំណត់គោលដៅកាឡូរីប្រចាំថ្ងៃដោយស្វ័យប្រវត្ត។\n"
+                "• 🏃 /strava — ភ្ជាប់ ឬផ្តាច់គណនីជាមួយ Strava ដើម្បីទាញយកទិន្នន័យហាត់ប្រាណ។\n"
                 "• 📊 /stats — មើលរបាយការណ៍សង្ខេបអាហារូបត្ថម្ភសម្រាប់ថ្ងៃនេះ។\n"
                 "• 📅 /weekly — មើលរបាយការណ៍សង្ខេបប្រចាំសប្តាហ៍ (ច័ន្ទ - អាទិត្យ)។\n"
                 "• 🎯 /goal <b>&lt;ចំនួនកាឡូរី&gt;</b> — កំណត់គោលដៅកាឡូរីប្រចាំថ្ងៃរបស់អ្នក (ឧទាហរណ៍៖ <b>/goal ២០០០</b>)។\n"
@@ -1678,35 +1751,35 @@ async def handle_telegram_update(payload: dict):
         elif text.startswith("/burn"):
             parts = text.split()
             if len(parts) < 2:
-                # Check Google Fit
-                token_info = db_get_fit_tokens(user_id)
+                # Check Strava
+                token_info = db_get_strava_tokens(user_id)
                 if not token_info:
                     await bot.send_message(
                         chat_id,
-                        "🏃 <b>កំណត់ត្រាការដុតរំលាយកាឡូរី (Google Fit)</b>\n"
+                        "🏃 <b>កំណត់ត្រាការដុតរំលាយកាឡូរី (Strava)</b>\n"
                         "━━━━━━━━━━━━━━━━━━━━\n"
-                        "គណនីរបស់អ្នកមិនទាន់បានភ្ជាប់ជាមួយ <b>Google Fit</b> នៅឡើយទេ។\n\n"
-                        "👉 ដើម្បីភ្ជាប់គណនី សូមវាយបញ្ជា៖ <b>/fit</b>\n"
+                        "គណនីរបស់អ្នកមិនទាន់បានភ្ជាប់ជាមួយ <b>Strava</b> នៅឡើយទេ។\n\n"
+                        "👉 ដើម្បីភ្ជាប់គណនី សូមវាយបញ្ជា៖ <b>/strava</b>\n"
                         "👉 ដើម្បីកត់ត្រាកាឡូរីដោយផ្ទាល់ សូមវាយ៖ <b>/burn [ចំនួនកាឡូរី]</b> (ឧ. <b>/burn 350</b>)"
                     )
                     return
                 
-                # Connected, let's fetch the latest session
-                loading_msg = await bot.send_message(chat_id, "🔄 <i>កំពុងទាញយកលំហាត់ប្រាណចុងក្រោយពី Google Fit... សូមរង់ចាំមួយភ្លែត។</i>")
+                # Connected, let's fetch the latest activity
+                loading_msg = await bot.send_message(chat_id, "🔄 <i>កំពុងទាញយកលំហាត់ប្រាណចុងក្រោយពី Strava... សូមរង់ចាំមួយភ្លែត។</i>")
                 loading_msg_id = loading_msg.get("result", {}).get("message_id")
                 
                 try:
-                    session = await fetch_latest_fit_session(user_id)
+                    session = await fetch_latest_strava_activity(user_id)
                     if session:
                         # Construct a unique key for the activity_name to prevent duplicates
-                        act_key = f"{session['session_name']} ({session['date_str']})"
+                        act_key = f"{session['activity_name']} ({session['date_str']})"
                         
                         # Check if this exact session has already been logged in database
                         is_duplicate = False
                         with get_db_connection() as conn:
                             cursor = conn.cursor()
                             cursor.execute(
-                                "SELECT 1 FROM burn_logs WHERE user_id = ? AND activity_name = ? AND source = 'Google Fit'",
+                                "SELECT 1 FROM burn_logs WHERE user_id = ? AND activity_name = ? AND source = 'Strava'",
                                 (user_id, act_key)
                             )
                             if cursor.fetchone():
@@ -1716,10 +1789,10 @@ async def handle_telegram_update(payload: dict):
                             duplicate_card = (
                                 "✅ <b>លំហាត់ប្រាណនេះត្រូវបានកត់ត្រារួចហើយ</b>\n"
                                 "━━━━━━━━━━━━━━━━━━━━\n"
-                                f"🚴 <b>សកម្មភាព៖</b> <b>{session['session_name']}</b>\n"
+                                f"🚴 <b>សកម្មភាព៖</b> <b>{session['activity_name']}</b> ({session['session_name']})\n"
                                 f"🔥 <b>ដុតកាឡូរី៖</b> <b>{session['calories']} kcal</b>\n"
-                                f"⏲ <b>ពេលវេលា</b> <b>{session['duration']}mins</b>\n"
-                                f"🗾 <b>ចម្ងាយ</b> <b>{session['distance']}km</b>\n"
+                                f"⏲ <b>ពេលវេលា៖</b> <b>{session['duration']} នាទី</b>\n"
+                                f"🗾 <b>ចម្ងាយ៖</b> <b>{session['distance']} គីឡូម៉ែត្រ</b>\n"
                                 "━━━━━━━━━━━━━━━━━━━━\n"
                                 "លំហាត់ប្រាណចុងក្រោយរបស់អ្នក ត្រូវបានកត់ត្រារក្សាទុករួចរាល់នៅក្នុងប្រព័ន្ធហើយ! 😉"
                             )
@@ -1729,15 +1802,15 @@ async def handle_telegram_update(payload: dict):
                                 await bot.send_message(chat_id, duplicate_card)
                         else:
                             # Not a duplicate, log it!
-                            db_add_burn(user_id, session['calories'], act_key, "Google Fit")
+                            db_add_burn(user_id, session['calories'], act_key, "Strava")
                             
                             success_card = (
                                 "🔥 <b>បានទាញយកលំហាត់ប្រាណចុងក្រោយជោគជ័យ!</b>\n"
                                 "━━━━━━━━━━━━━━━━━━━━\n"
-                                f"🚴 <b>សកម្មភាព៖</b> <b>{session['session_name']}</b>\n"
+                                f"🚴 <b>សកម្មភាព៖</b> <b>{session['activity_name']}</b> ({session['session_name']})\n"
                                 f"🔥 <b>ដុតកាឡូរី៖</b> <b>{session['calories']} kcal</b>\n"
-                                f"⏲ <b>ពេលវេលា</b> <b>{session['duration']}mins</b>\n"
-                                f"🗾 <b>ចម្ងាយ</b> <b>{session['distance']}km</b>\n"
+                                f"⏲ <b>ពេលវេលា៖</b> <b>{session['duration']} នាទី</b>\n"
+                                f"🗾 <b>ចម្ងាយ៖</b> <b>{session['distance']} គីឡូម៉ែត្រ</b>\n"
                                 "━━━━━━━━━━━━━━━━━━━━\n"
                                 "សកម្មភាពនេះត្រូវបានបន្ថែមទៅក្នុងកំណត់ត្រាដុតកាឡូរីថ្ងៃនេះរបស់អ្នករួចរាល់ហើយ! 💪"
                             )
@@ -1747,24 +1820,24 @@ async def handle_telegram_update(payload: dict):
                                 await bot.send_message(chat_id, success_card)
                     else:
                         fail_msg = (
-                            "⚠️ <b>មិនឃើញទិន្នន័យហាត់ប្រាណក្នុង Google Fit!</b>\n"
+                            "⚠️ <b>មិនឃើញទិន្នន័យហាត់ប្រាណក្នុង Strava!</b>\n"
                             "━━━━━━━━━━━━━━━━━━━━\n"
-                            "រកមិនឃើញកំណត់ត្រាលំហាត់ប្រាណ ឬសកម្មភាពហាត់ប្រាណ (សកម្មភាព ៧ថ្ងៃចុងក្រោយ) នៅក្នុងគណនី Google Fit របស់អ្នកឡើយទេ។\n\n"
+                            "រកមិនឃើញកំណត់ត្រាលំហាត់ប្រាណ ឬសកម្មភាពហាត់ប្រាណ (សកម្មភាព ៧ថ្ងៃចុងក្រោយ) នៅក្នុងគណនី Strava របស់អ្នកឡើយទេ។\n\n"
                             "💡 <b>ដំណោះស្រាយ៖</b>\n"
-                            "1. សូមប្រាកដថានាឡិកា ឬកម្មវិធីសុខភាពរបស់អ្នកបាន Sync ជាមួយ Google Fit រួចរាល់។\n"
-                            "2. អ្នកអាចកត់ត្រាដោយផ្ទាល់ដោយវាយ៖ <b>/burn [ចំនួនកាឡូរី]</b>\n"
+                            "1. សូមប្រាកដថានាឡិកា ឬកម្មវិធីសុខភាពរបស់អ្នកបាន Sync ជាមួយ Strava រួចរាល់។\n"
+                            "2. អ្នកអាចកត់ត្រាកាឡូរីដោយផ្ទាល់ដោយវាយ៖ <b>/burn [ចំនួនកាឡូរី]</b>\n"
                             "ឧទាហរណ៍៖ <b>/burn 350</b>"
                         )
                         if loading_msg_id:
                             await bot.edit_message(chat_id, loading_msg_id, fail_msg)
                         else:
                             await bot.send_message(chat_id, fail_msg)
-                except Exception as fit_err:
-                    print(f"Error fetching latest fit session inside command: {fit_err}")
+                except Exception as strava_err:
+                    print(f"Error fetching latest Strava activity inside command: {strava_err}")
                     error_msg = (
                         "⚠️ <b>ការទាញយកទិន្នន័យបានបរាជ័យ</b>\n"
                         "━━━━━━━━━━━━━━━━━━━━\n"
-                        f"កំហុសបច្ចេកទេស៖\n<code>{fit_err}</code>\n\n"
+                        f"កំហុសបច្ចេកទេស៖\n<code>{strava_err}</code>\n\n"
                         "សូមព្យាយាមម្តងទៀត ឬកត់ត្រាដោយផ្ទាល់៖ <b>/burn [ចំនួនកាឡូរី]</b>"
                     )
                     if loading_msg_id:
@@ -1794,36 +1867,35 @@ async def handle_telegram_update(payload: dict):
                 )
             return
 
-        elif text.startswith("/fit"):
-            client_id = os.getenv("GOOGLE_FIT_CLIENT_ID")
-            client_secret = os.getenv("GOOGLE_FIT_CLIENT_SECRET")
-            redirect_uri = os.getenv("GOOGLE_FIT_REDIRECT_URI")
+        elif text.startswith("/strava"):
+            client_id = os.getenv("STRAVA_CLIENT_ID")
+            client_secret = os.getenv("STRAVA_CLIENT_SECRET")
+            redirect_uri = os.getenv("STRAVA_REDIRECT_URI")
             
             if not client_id or not client_secret or not redirect_uri:
                 await bot.send_message(
                     chat_id,
                     "⚠️ <b>ការកំណត់មិនទាន់រួចរាល់!</b>\n"
                     "━━━━━━━━━━━━━━━━━━━━\n"
-                    "ម្ចាស់ប្រព័ន្ធមិនទាន់បានកំណត់ព័ត៌មានសម្ងាត់ Google Fit (Client ID & Client Secret) នៅក្នុងឯកសារ `.env` នៅឡើយទេ។"
+                    "ម្ចាស់ប្រព័ន្ធមិនទាន់បានកំណត់ព័ត៌មានសម្ងាត់ Strava (Client ID, Client Secret, & Redirect URI) នៅក្នុងឯកសារ `.env` នៅឡើយទេ។"
                 )
                 return
                 
-            token_info = db_get_fit_tokens(user_id)
+            token_info = db_get_strava_tokens(user_id)
             if token_info:
-                valid_token = await get_valid_fit_token(user_id, token_info)
+                valid_token = await get_valid_strava_token(user_id, token_info)
                 if valid_token:
                     status_text = "✅ <b>បានភ្ជាប់ជោគជ័យ! (Connected)</b>"
                 else:
                     status_text = "⚠️ <b>បញ្ហាក្នុងការភ្ជាប់/ហួសសម័យ!</b>"
                     
-                fit_card = (
-                    "🏃 <b>Google Fit Integration Status</b>\n"
+                strava_card = (
+                    "🏃 <b>Strava Integration Status</b>\n"
                     "━━━━━━━━━━━━━━━━━━━━\n"
                     f"• ស្ថានភាព៖ {status_text}\n"
-                    "• គណនី៖ គណនី Google របស់អ្នកត្រូវបានភ្ជាប់រួចរាល់\n\n"
+                    "• គណនី៖ គណនី Strava របស់អ្នកត្រូវបានភ្ជាប់រួចរាល់\n\n"
                     "💡 <b>មុខងារគាំទ្រ៖</b>\n"
-                    "1. <b>Auto-Sync Calories:</b> រាល់ពេលអ្នកកត់ត្រាអាហារ (រូបភាព ឬអក្សរ) វានឹងស្វែងរក និងបញ្ចូលទៅក្នុង Google Fit ស្វ័យប្រវត្ត។\n"
-                    "2. <b>Auto-Import Exercise:</b> វាយបញ្ជា <b>/burn</b> (ដោយគ្មានលេខកាឡូរី) ដើម្បីទាញយកទិន្នន័យហាត់ប្រាណរបស់ថ្ងៃនេះពី Google Fit មកកត់ត្រាក្នុង NutriBot ភ្លាមៗ!\n"
+                    "1. <b>Auto-Import Exercise:</b> វាយបញ្ជា <b>/burn</b> (ដោយគ្មានលេខកាឡូរី) ដើម្បីទាញយកសកម្មភាពហាត់ប្រាណចុងក្រោយរបស់ថ្ងៃនេះពី Strava មកកត់ត្រាក្នុង NutriBot ភ្លាមៗ!\n"
                     "━━━━━━━━━━━━━━━━━━━━\n"
                     "ប្រសិនបើអ្នកចង់ផ្តាច់ការភ្ជាប់ សូមចុចប៊ូតុងខាងក្រោម៖"
                 )
@@ -1831,31 +1903,30 @@ async def handle_telegram_update(payload: dict):
                     "inline_keyboard": [
                         [
                             {
-                                "text": "🔌 ផ្តាច់ការភ្ជាប់ Google Fit",
-                                "callback_data": "disconnect_fit"
+                                "text": "🔌 ផ្តាច់ការភ្ជាប់ Strava",
+                                "callback_data": "disconnect_strava"
                             }
                         ]
                     ]
                 }
-                await bot.send_message(chat_id, fit_card, reply_markup=inline_reply_markup)
+                await bot.send_message(chat_id, strava_card, reply_markup=inline_reply_markup)
             else:
-                base_auth_url = redirect_uri.replace("/api/fit/callback", "/api/fit/auth")
+                base_auth_url = redirect_uri.replace("/api/strava/callback", "/api/strava/auth")
                 auth_url = f"{base_auth_url}?user_id={user_id}"
                 
                 welcome_card = (
-                    "🏃 <b>ភ្ជាប់គណនីជាមួយ Google Fit</b>\n"
+                    "🏃 <b>ភ្ជាប់គណនីជាមួយ Strava</b>\n"
                     "━━━━━━━━━━━━━━━━━━━━\n"
-                    "បង្កើនភាពងាយស្រួលដោយភ្ជាប់ NutriBot ជាមួយ Google Fit! ខ្ញុំនឹងជួយអ្នកក្នុង៖\n\n"
-                    "• <b>ស្វ័យប្រវត្តកត់ត្រាអាហារ៖</b> រាល់អាហារដែលអ្នកកត់ក្នុង NutriBot នឹងត្រូវបញ្ចូលទៅក្នុងគណនី Google Fit របស់អ្នកភ្លាមៗ។\n"
-                    "• <b>ស្វ័យប្រវត្តកត់ត្រាដុតកាឡូរី៖</b> ទាញយកទិន្នន័យហាត់ប្រាណដែលអ្នកបានធ្វើពីគ្រប់ឧបករណ៍/កម្មវិធីសុខភាព (នាឡិកាឆ្លាតវៃ កម្មវិធីដើរ...) មកកាន់ NutriBot ដោយគ្រាន់តែប្រើបញ្ជា <b>/burn</b>!\n"
+                    "បង្កើនភាពងាយស្រួលដោយភ្ជាប់ NutriBot ជាមួយ Strava! ខ្ញុំនឹងជួយអ្នកក្នុង៖\n\n"
+                    "• <b>ស្វ័យប្រវត្តកត់ត្រាដុតកាឡូរី៖</b> ទាញយកទិន្នន័យហាត់ប្រាណដែលអ្នកបានធ្វើពីគ្រប់ឧបករណ៍/កម្មវិធីសុខភាព (នាឡិកាឆ្លាតវៃ កម្មវិធីរត់ កង់...) មកកាន់ NutriBot ដោយគ្រាន់តែប្រើបញ្ជា <b>/burn</b>!\n"
                     "━━━━━━━━━━━━━━━━━━━━\n"
-                    "សូមចុចប៊ូតុងខាងក្រោមដើម្បីផ្ទៀងផ្ទាត់ និងភ្ជាប់គណនី Google Fit របស់អ្នក៖"
+                    "សូមចុចប៊ូតុងខាងក្រោមដើម្បីផ្ទៀងផ្ទាត់ និងភ្ជាប់គណនី Strava របស់អ្នក៖"
                 )
                 inline_reply_markup = {
                     "inline_keyboard": [
                         [
                             {
-                                "text": "🔗 ភ្ជាប់ជាមួយ Google Fit",
+                                "text": "🔗 ភ្ជាប់ជាមួយ Strava",
                                 "url": auth_url
                             }
                         ]
@@ -2426,6 +2497,161 @@ async def get_or_create_nutrition_datasource(access_token: str) -> str:
         print(f"Error creating com.google.nutrition data source: {e}")
     return None
 
+async def get_valid_strava_token(user_id: int, token_info: dict) -> str:
+    """Checks if Strava access token is expired, refreshes it using the refresh token, and returns it."""
+    import time
+    expires_at = token_info.get("expires_at")
+    
+    # If expired or expires in less than 5 minutes (300 seconds)
+    if expires_at is None or time.time() >= expires_at - 300:
+        refresh_token = token_info.get("refresh_token")
+        if not refresh_token:
+            return None
+            
+        client_id = os.getenv("STRAVA_CLIENT_ID")
+        client_secret = os.getenv("STRAVA_CLIENT_SECRET")
+        if not client_id or not client_secret:
+            print("Missing Strava Client credentials in .env")
+            return None
+            
+        # Refresh access token from Strava
+        url = "https://www.strava.com/oauth/token"
+        payload = {
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "refresh_token": refresh_token,
+            "grant_type": "refresh_token"
+        }
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.post(url, data=payload)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    new_access_token = data["access_token"]
+                    new_expires_at = data["expires_at"]
+                    # Update token in DB
+                    db_update_strava_access_token(user_id, new_access_token, new_expires_at)
+                    return new_access_token
+                else:
+                    print(f"Failed to refresh Strava token: {resp.text}")
+                    if "invalid_grant" in resp.text:
+                        db_delete_strava_tokens(user_id)
+        except Exception as e:
+            print(f"Error refreshing Strava access token for {user_id}: {e}")
+        return None
+    
+    return token_info.get("access_token")
+
+async def fetch_latest_strava_activity(user_id: int) -> dict:
+    """Fetches the single most recent exercise session and its exact calories from Strava."""
+    token_info = db_get_strava_tokens(user_id)
+    if not token_info:
+        return None
+        
+    access_token = await get_valid_strava_token(user_id, token_info)
+    if not access_token:
+        return None
+        
+    import datetime
+    import time
+    
+    # Fetch today's activities in Cambodia time (ICT - UTC+7)
+    now_kh = datetime.datetime.utcnow() + datetime.timedelta(hours=7)
+    start_of_today_kh = datetime.datetime(now_kh.year, now_kh.month, now_kh.day, 0, 0, 0)
+    start_of_today_utc = start_of_today_kh - datetime.timedelta(hours=7)
+    after_timestamp = int(start_of_today_utc.replace(tzinfo=datetime.timezone.utc).timestamp())
+    
+    # Fallback to last 7 days if no activities found today
+    seven_days_ago = datetime.datetime.utcnow() - datetime.timedelta(days=7)
+    seven_days_ago_timestamp = int(seven_days_ago.replace(tzinfo=datetime.timezone.utc).timestamp())
+    
+    headers = {
+        "Authorization": f"Bearer {access_token}"
+    }
+    
+    url = f"https://www.strava.com/api/v3/athlete/activities?after={after_timestamp}&per_page=5"
+    
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(url, headers=headers)
+            if resp.status_code != 200:
+                raise Exception(f"Strava activities API returned status {resp.status_code}: {resp.text}")
+                
+            activities = resp.json()
+            
+            # If no activities today, fall back to last 7 days
+            if not activities:
+                url_fallback = f"https://www.strava.com/api/v3/athlete/activities?after={seven_days_ago_timestamp}&per_page=5"
+                resp_fb = await client.get(url_fallback, headers=headers)
+                if resp_fb.status_code == 200:
+                    activities = resp_fb.json()
+            
+            if not activities:
+                raise Exception("Strava returned 0 activities in the last 7 days. Please record an activity on your Strava app first.")
+            
+            activities.reverse() # Get the latest first
+            latest_act = activities[0]
+            
+            activity_id = latest_act.get("id")
+            session_name = latest_act.get("name", "Workout")
+            act_type = latest_act.get("type", "Workout")
+            
+            type_mappings = {
+                "Run": "រត់ (Running)",
+                "Ride": "ជិះកង់ (Biking)",
+                "Walk": "ដើរ (Walking)",
+                "Hike": "ដើរភ្នំ (Hiking)",
+                "Swim": "ហែលទឹក (Swimming)",
+                "WeightTraining": "លើកទម្ងន់ (Weight Lifting)",
+                "Workout": "ហាត់ប្រាណទូទៅ (Workout)",
+                "Yoga": "យូហ្គា (Yoga)",
+                "Elliptical": "ម៉ាស៊ីន Elliptical"
+            }
+            act_name = type_mappings.get(act_type, f"ហាត់ប្រាណ {act_type}")
+            
+            # Extract duration in minutes
+            duration_minutes = int(latest_act.get("moving_time", 0) / 60.0)
+            if duration_minutes < 1:
+                duration_minutes = int(latest_act.get("elapsed_time", 0) / 60.0)
+            if duration_minutes < 1:
+                duration_minutes = 30
+                
+            # Extract distance in kilometers
+            distance_meters = latest_act.get("distance", 0)
+            distance_km = round(distance_meters / 1000.0, 1)
+            
+            # Extract calories or work done
+            calories_burned = latest_act.get("calories", 0)
+            if calories_burned < 1:
+                calories_burned = latest_act.get("kilojoules", 0)
+            if calories_burned < 1:
+                calories_burned = int(duration_minutes * 6.5) # standard estimate
+                
+            start_date_local = latest_act.get("start_date_local")
+            if start_date_local:
+                try:
+                    clean_date = start_date_local.replace("Z", "")
+                    dt = datetime.datetime.fromisoformat(clean_date)
+                    date_str = dt.strftime("%d-%m-%Y %I:%M %p")
+                except Exception:
+                    date_str = datetime.datetime.utcnow().strftime("%d-%m-%Y %I:%M %p")
+            else:
+                date_str = datetime.datetime.utcnow().strftime("%d-%m-%Y %I:%M %p")
+                
+            return {
+                "activity_type": act_type,
+                "activity_name": act_name,
+                "session_name": session_name,
+                "calories": int(calories_burned),
+                "duration": duration_minutes,
+                "distance": distance_km,
+                "date_str": date_str,
+                "activity_id": activity_id
+            }
+    except Exception as e:
+        print(f"Error fetching latest Strava activity: {e}")
+        raise e
+
 async def sync_meal_to_google_fit(user_id: int, analysis: FoodAnalysis):
     """Syncs user logged nutrition data to their connected Google Fit account."""
     try:
@@ -2939,6 +3165,206 @@ async def fit_callback(code: str, state: str):
                         </div>
                         <h1>Google Fit ភ្ជាប់បានជោគជ័យ!</h1>
                         <p>គណនី NutriBot របស់អ្នកឥឡូវនេះត្រូវបានភ្ជាប់ទៅកាន់ Google Fit រួចរាល់ហើយ។ អ្នកអាចបិទទំព័រនេះ និងត្រឡប់ទៅកាន់ Telegram Bot វិញដើម្បីបន្តប្រើប្រាស់។</p>
+                        <button class="btn" onclick="window.close()">រួចរាល់</button>
+                    </div>
+                </body>
+                </html>
+                """
+                return HTMLResponse(content=success_html)
+            else:
+                return HTMLResponse(content=f"<h2>❌ ការដោះដូរ Token បានបរាជ័យ!</h2><p>{resp.text}</p>", status_code=500)
+    except Exception as e:
+        return HTMLResponse(content=f"<h2>❌ កំហុសបច្ចេកទេស!</h2><p>{str(e)}</p>", status_code=500)
+
+# ---------------------------------------------------------
+# Strava OAuth Endpoints
+# ---------------------------------------------------------
+@app.get("/api/strava/auth")
+async def strava_auth(user_id: int):
+    """Generates and redirects to the Strava OAuth 2.0 Consent Screen."""
+    client_id = os.getenv("STRAVA_CLIENT_ID")
+    redirect_uri = os.getenv("STRAVA_REDIRECT_URI")
+    
+    from fastapi.responses import JSONResponse
+    if not client_id or not redirect_uri:
+        return JSONResponse(
+            status_code=500,
+            content={"ok": False, "error": "Strava credentials are not properly configured in .env."}
+        )
+        
+    auth_url = (
+        "https://www.strava.com/oauth/authorize"
+        f"?client_id={client_id}"
+        f"&redirect_uri={redirect_uri}"
+        f"&response_type=code"
+        f"&scope=activity:read_all"
+        f"&state={user_id}"
+        f"&approval_prompt=force"
+    )
+    
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(auth_url)
+
+@app.get("/api/strava/callback")
+async def strava_callback(code: str, state: str, scope: str = None):
+    """Handles OAuth callback, exchanges authorization code for tokens, and displays a premium HTML confirmation page."""
+    user_id = int(state)
+    client_id = os.getenv("STRAVA_CLIENT_ID")
+    client_secret = os.getenv("STRAVA_CLIENT_SECRET")
+    redirect_uri = os.getenv("STRAVA_REDIRECT_URI")
+    
+    from fastapi.responses import HTMLResponse
+    
+    if not code or not state:
+        return HTMLResponse(content="<h2>❌ Parameter មិនត្រឹមត្រូវ!</h2>", status_code=400)
+        
+    url = "https://www.strava.com/oauth/token"
+    payload = {
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "code": code,
+        "grant_type": "authorization_code"
+    }
+    
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(url, data=payload)
+            if resp.status_code == 200:
+                data = resp.json()
+                access_token = data["access_token"]
+                refresh_token = data.get("refresh_token")
+                expires_at = data.get("expires_at")
+                
+                db_save_strava_tokens(user_id, access_token, refresh_token, expires_at)
+                
+                # Send a message to the user confirming successful sync!
+                try:
+                    await bot.send_message(
+                        user_id,
+                        "🎉 <b>ភ្ជាប់គណនីជាមួយ Strava ជោគជ័យ! (Connected)</b>\n"
+                        "━━━━━━━━━━━━━━━━━━━━\n"
+                        "គណនី Strava របស់អ្នកត្រូវបានភ្ជាប់ទៅកាន់ NutriBot រួចរាល់ហើយ!\n\n"
+                        "👉 វាយបញ្ជា៖ <b>/burn</b> ដើម្បីទាញយកសកម្មភាពហាត់ប្រាណចុងក្រោយរបស់អ្នកពី Strava មកកត់ត្រាក្នុង NutriBot ភ្លាមៗ!"
+                    )
+                except Exception as tg_err:
+                    print(f"Failed to send Strava Telegram confirmation to user {user_id}: {tg_err}")
+                
+                success_html = """
+                <!DOCTYPE html>
+                <html lang="en">
+                <head>
+                    <meta charset="UTF-8">
+                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                    <title>Strava Connected</title>
+                    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
+                    <style>
+                        :root {
+                            --bg: #0b0f19;
+                            --panel: rgba(255, 255, 255, 0.05);
+                            --border: rgba(255, 255, 255, 0.08);
+                            --glow: #fc4c02; /* Strava Orange */
+                            --success: #10b981;
+                            --text: #f3f4f6;
+                            --text-muted: #9ca3af;
+                        }
+                        * { box-sizing: border-box; margin: 0; padding: 0; }
+                        body {
+                            font-family: 'Inter', sans-serif;
+                            background: var(--bg);
+                            color: var(--text);
+                            display: flex;
+                            align-items: center;
+                            justify-content: center;
+                            min-height: 100vh;
+                            overflow: hidden;
+                            perspective: 1000px;
+                        }
+                        .container {
+                            background: var(--panel);
+                            border: 1px solid var(--border);
+                            backdrop-filter: blur(20px);
+                            border-radius: 24px;
+                            padding: 40px;
+                            width: 90%;
+                            max-width: 440px;
+                            text-align: center;
+                            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5), 0 0 40px rgba(252, 76, 2, 0.15);
+                            transform: translateY(0);
+                            animation: floatIn 1s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+                        }
+                        .icon-wrap {
+                            position: relative;
+                            width: 90px;
+                            height: 90px;
+                            margin: 0 auto 30px;
+                            display: flex;
+                            align-items: center;
+                            justify-content: center;
+                        }
+                        .icon-bg {
+                            position: absolute;
+                            width: 100%;
+                            height: 100%;
+                            background: rgba(252, 76, 2, 0.15);
+                            border-radius: 50%;
+                            transform: scale(0.8);
+                            animation: pulse 2s infinite ease-in-out;
+                        }
+                        .success-icon {
+                            font-size: 45px;
+                            z-index: 2;
+                        }
+                        h1 {
+                            font-size: 24px;
+                            font-weight: 700;
+                            margin-bottom: 12px;
+                            letter-spacing: -0.5px;
+                            color: #ffffff;
+                        }
+                        p {
+                            font-size: 15px;
+                            color: var(--text-muted);
+                            line-height: 1.6;
+                            margin-bottom: 30px;
+                        }
+                        .btn {
+                            display: inline-block;
+                            width: 100%;
+                            padding: 14px;
+                            border: none;
+                            background: linear-gradient(135deg, #fc4c02 0%, #e34402 100%);
+                            border-radius: 12px;
+                            color: #ffffff;
+                            font-weight: 600;
+                            font-size: 15px;
+                            text-decoration: none;
+                            box-shadow: 0 4px 15px rgba(252, 76, 2, 0.3);
+                            cursor: pointer;
+                            transition: transform 0.2s, box-shadow 0.2s;
+                        }
+                        .btn:hover {
+                            transform: translateY(-2px);
+                            box-shadow: 0 6px 20px rgba(252, 76, 2, 0.4);
+                        }
+                        @keyframes floatIn {
+                            from { transform: translateY(40px); opacity: 0; }
+                            to { transform: translateY(0); opacity: 1; }
+                        }
+                        @keyframes pulse {
+                            0% { transform: scale(0.9); opacity: 0.8; }
+                            50% { transform: scale(1.15); opacity: 0.4; }
+                            100% { transform: scale(0.9); opacity: 0.8; }
+                        }
+                    </style>
+                </head>
+                <body>
+                    <div class="container">
+                        <div class="icon-wrap">
+                            <div class="icon-bg"></div>
+                            <div class="success-icon">🍊</div>
+                        </div>
+                        <h1>Strava ភ្ជាប់បានជោគជ័យ!</h1>
+                        <p>គណនី NutriBot របស់អ្នកឥឡូវនេះត្រូវបានភ្ជាប់ទៅកាន់ Strava រួចរាល់ហើយ។ អ្នកអាចបិទទំព័រនេះ និងត្រឡប់ទៅកាន់ Telegram Bot វិញដើម្បីបន្តប្រើប្រាស់。</p>
                         <button class="btn" onclick="window.close()">រួចរាល់</button>
                     </div>
                 </body>
