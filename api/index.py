@@ -2589,7 +2589,7 @@ async def fetch_latest_strava_activity(user_id: int) -> dict:
             if not activities:
                 raise Exception("Strava returned 0 activities in the last 7 days. Please record an activity on your Strava app first.")
             
-            activities.reverse() # Get the latest first
+            # Strava API returns activities descending (latest first), so index 0 is already the most recent activity
             latest_act = activities[0]
             
             activity_id = latest_act.get("id")
