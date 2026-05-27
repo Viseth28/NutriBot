@@ -2561,10 +2561,6 @@ async def fetch_latest_strava_activity(user_id: int) -> dict:
     start_of_today_utc = start_of_today_kh - datetime.timedelta(hours=7)
     after_timestamp = int(start_of_today_utc.replace(tzinfo=datetime.timezone.utc).timestamp())
     
-    # Fallback to last 7 days if no activities found today
-    seven_days_ago = datetime.datetime.utcnow() - datetime.timedelta(days=7)
-    seven_days_ago_timestamp = int(seven_days_ago.replace(tzinfo=datetime.timezone.utc).timestamp())
-    
     headers = {
         "Authorization": f"Bearer {access_token}"
     }
@@ -2579,17 +2575,10 @@ async def fetch_latest_strava_activity(user_id: int) -> dict:
                 
             activities = resp.json()
             
-            # If no activities today, fall back to last 7 days
             if not activities:
-                url_fallback = f"https://www.strava.com/api/v3/athlete/activities?after={seven_days_ago_timestamp}&per_page=5"
-                resp_fb = await client.get(url_fallback, headers=headers)
-                if resp_fb.status_code == 200:
-                    activities = resp_fb.json()
+                raise Exception("គ្មានសកម្មភាពលំហាត់ប្រាណដែលបានកត់ត្រាក្នុងថ្ងៃនេះទេ! សូមកត់ត្រាការហាត់ប្រាណនៅលើកម្មវិធី Strava ថ្ងៃនេះជាមុនសិន។")
             
-            if not activities:
-                raise Exception("Strava returned 0 activities in the last 7 days. Please record an activity on your Strava app first.")
-            
-            # Strava API returns activities descending (latest first), so index 0 is already the most recent activity
+            # Strava API returns activities descending (latest first), so index 0 is already the most recent activity today
             latest_act = activities[0]
             
             activity_id = latest_act.get("id")
