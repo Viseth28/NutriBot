@@ -3627,23 +3627,50 @@ async def setup_strava_webhook(request: Request):
     callback_url = f"{protocol}://{host}/api/strava/webhook"
     verify_token = "NutriBotStravaVerifyToken123!"
     
-    url = "https://www.strava.com/api/v3/push_subscriptions"
-    payload = {
-        "client_id": client_id,
-        "client_secret": client_secret,
-        "callback_url": callback_url,
-        "verify_token": verify_token
-    }
-    
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.post(url, data=payload)
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            # 1. Fetch any existing subscriptions
+            get_url = f"https://www.strava.com/api/v3/push_subscriptions?client_id={client_id}&client_secret={client_secret}"
+            get_resp = await client.get(get_url)
+            
+            deleted_count = 0
+            if get_resp.status_code == 200:
+                subs = get_resp.json()
+                if isinstance(subs, list):
+                    for sub in subs:
+                        sub_id = sub.get("id")
+                        if sub_id:
+                            del_url = f"https://www.strava.com/api/v3/push_subscriptions/{sub_id}?client_id={client_id}&client_secret={client_secret}"
+                            del_resp = await client.delete(del_url)
+                            if del_resp.status_code in [200, 204]:
+                                deleted_count += 1
+                                
+            # 2. Register the fresh webhook
+            post_url = "https://www.strava.com/api/v3/push_subscriptions"
+            payload = {
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "callback_url": callback_url,
+                "verify_token": verify_token
+            }
+            
+            resp = await client.post(post_url, data=payload)
             if resp.status_code in [200, 201]:
-                return JSONResponse(content={"ok": True, "message": "Strava webhook registered successfully!", "data": resp.json()})
+                return JSONResponse(content={
+                    "ok": True, 
+                    "message": "Strava webhook registered successfully!", 
+                    "deleted_previous_subscriptions": deleted_count,
+                    "data": resp.json()
+                })
             else:
                 return JSONResponse(
                     status_code=resp.status_code,
-                    content={"ok": False, "message": "Failed to register Strava webhook.", "details": resp.text}
+                    content={
+                        "ok": False, 
+                        "message": "Failed to register Strava webhook.", 
+                        "deleted_previous_subscriptions": deleted_count,
+                        "details": resp.text
+                    }
                 )
     except Exception as e:
         return JSONResponse(status_code=500, content={"ok": False, "error": str(e)})
