@@ -123,9 +123,14 @@ def startup_event():
                 access_token TEXT,
                 refresh_token TEXT,
                 expires_at REAL,
+                athlete_id INTEGER,
                 updated_at TEXT DEFAULT CURRENT_TIMESTAMP
             );
             """)
+            try:
+                cursor.execute("ALTER TABLE strava_tokens ADD COLUMN athlete_id INTEGER;")
+            except Exception:
+                pass
             try:
                 cursor.execute("ALTER TABLE users ADD COLUMN daily_calorie_budget INTEGER DEFAULT 2000;")
             except Exception:
@@ -313,18 +318,31 @@ def db_delete_fit_tokens(user_id: int):
         cursor.execute("DELETE FROM google_fit_tokens WHERE user_id = ?", (user_id,))
         conn.commit()
 
-def db_save_strava_tokens(user_id: int, access_token: str, refresh_token: str, expires_at: float):
+def db_save_strava_tokens(user_id: int, access_token: str, refresh_token: str, expires_at: float, athlete_id: int = None):
     """Saves or updates Strava OAuth tokens for a user."""
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(
             """
-            INSERT OR REPLACE INTO strava_tokens (user_id, access_token, refresh_token, expires_at, updated_at)
-            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+            INSERT OR REPLACE INTO strava_tokens (user_id, access_token, refresh_token, expires_at, athlete_id, updated_at)
+            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             """,
-            (user_id, access_token, refresh_token, expires_at)
+            (user_id, access_token, refresh_token, expires_at, athlete_id)
         )
         conn.commit()
+
+def db_get_user_id_by_strava_athlete(athlete_id: int) -> int:
+    """Retrieves user_id by Strava athlete_id."""
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT user_id FROM strava_tokens WHERE athlete_id = ?", (athlete_id,))
+            row = cursor.fetchone()
+            if row:
+                return row[0]
+    except Exception as e:
+        print(f"Error getting user_id for athlete_id {athlete_id}: {e}")
+    return None
 
 def db_update_strava_access_token(user_id: int, access_token: str, expires_at: float):
     """Updates Strava access token and expiry time without overwriting the refresh token."""
@@ -3224,7 +3242,11 @@ async def strava_callback(code: str, state: str, scope: str = None):
                 refresh_token = data.get("refresh_token")
                 expires_at = data.get("expires_at")
                 
-                db_save_strava_tokens(user_id, access_token, refresh_token, expires_at)
+                athlete_id = None
+                if "athlete" in data and isinstance(data["athlete"], dict):
+                    athlete_id = data["athlete"].get("id")
+                
+                db_save_strava_tokens(user_id, access_token, refresh_token, expires_at, athlete_id)
                 
                 # Send a message to the user confirming successful sync!
                 try:
@@ -3499,6 +3521,197 @@ async def health_check():
         
     return results
 
+async def fetch_specific_strava_activity(user_id: int, activity_id: int) -> dict:
+    """Fetches a specific completed activity details from Strava by its activity ID."""
+    token_info = db_get_strava_tokens(user_id)
+    if not token_info:
+        return None
+        
+    access_token = await get_valid_strava_token(user_id, token_info)
+    if not access_token:
+        return None
+        
+    import datetime
+    headers = {
+        "Authorization": f"Bearer {access_token}"
+    }
+    
+    url = f"https://www.strava.com/api/v3/activities/{activity_id}"
+    
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(url, headers=headers)
+            if resp.status_code != 200:
+                raise Exception(f"Strava activity details API returned status {resp.status_code}: {resp.text}")
+                
+            act = resp.json()
+            
+            activity_id = act.get("id")
+            session_name = act.get("name", "Workout")
+            act_type = act.get("type", "Workout")
+            
+            type_mappings = {
+                "Run": "រត់ (Running)",
+                "Ride": "ជិះកង់ (Biking)",
+                "Walk": "ដើរ (Walking)",
+                "Hike": "ដើរភ្នំ (Hiking)",
+                "Swim": "ហែលទឹក (Swimming)",
+                "WeightTraining": "លើកទម្ងន់ (Weight Lifting)",
+                "Workout": "ហាត់ប្រាណទូទៅ (Workout)",
+                "Yoga": "យូហ្គា (Yoga)",
+                "Elliptical": "ម៉ាស៊ីន Elliptical"
+            }
+            act_name = type_mappings.get(act_type, f"ហាត់ប្រាណ {act_type}")
+            
+            # Extract duration in minutes
+            duration_minutes = int(act.get("moving_time", 0) / 60.0)
+            if duration_minutes < 1:
+                duration_minutes = int(act.get("elapsed_time", 0) / 60.0)
+            if duration_minutes < 1:
+                duration_minutes = 30
+                
+            # Extract distance in kilometers
+            distance_meters = act.get("distance", 0)
+            distance_km = round(distance_meters / 1000.0, 1)
+            
+            # Extract calories
+            calories_burned = act.get("calories", 0)
+            if calories_burned < 1:
+                calories_burned = act.get("kilojoules", 0)
+            if calories_burned < 1:
+                calories_burned = int(duration_minutes * 6.5)
+                
+            start_date_local = act.get("start_date_local")
+            if start_date_local:
+                try:
+                    clean_date = start_date_local.replace("Z", "")
+                    dt = datetime.datetime.fromisoformat(clean_date)
+                    date_str = dt.strftime("%d-%m-%Y %I:%M %p")
+                except Exception:
+                    date_str = datetime.datetime.utcnow().strftime("%d-%m-%Y %I:%M %p")
+            else:
+                date_str = datetime.datetime.utcnow().strftime("%d-%m-%Y %I:%M %p")
+                
+            return {
+                "activity_type": act_type,
+                "activity_name": act_name,
+                "session_name": session_name,
+                "calories": int(calories_burned),
+                "duration": duration_minutes,
+                "distance": distance_km,
+                "date_str": date_str,
+                "activity_id": activity_id
+            }
+    except Exception as e:
+        print(f"Error fetching specific Strava activity: {e}")
+        raise e
+
+@app.get("/api/strava/setup_webhook")
+async def setup_strava_webhook(request: Request):
+    """One-click setup endpoint to register Strava Push Subscription Webhook."""
+    client_id = os.getenv("STRAVA_CLIENT_ID")
+    client_secret = os.getenv("STRAVA_CLIENT_SECRET")
+    
+    from fastapi.responses import JSONResponse
+    if not client_id or not client_secret:
+        return JSONResponse(
+            status_code=500,
+            content={"ok": False, "error": "Strava credentials are not properly configured in .env."}
+        )
+        
+    host = request.headers.get("host")
+    protocol = "https"
+    if "localhost" in host or "127.0.0.1" in host:
+        protocol = "http"
+        
+    callback_url = f"{protocol}://{host}/api/strava/webhook"
+    verify_token = "NutriBotStravaVerifyToken123!"
+    
+    url = "https://www.strava.com/api/v3/push_subscriptions"
+    payload = {
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "callback_url": callback_url,
+        "verify_token": verify_token
+    }
+    
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(url, data=payload)
+            if resp.status_code in [200, 201]:
+                return JSONResponse(content={"ok": True, "message": "Strava webhook registered successfully!", "data": resp.json()})
+            else:
+                return JSONResponse(
+                    status_code=resp.status_code,
+                    content={"ok": False, "message": "Failed to register Strava webhook.", "details": resp.text}
+                )
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"ok": False, "error": str(e)})
+
+@app.get("/api/strava/webhook")
+async def strava_webhook_challenge(request: Request):
+    """Handles Strava's verification handshake (GET request)."""
+    params = dict(request.query_params)
+    mode = params.get("hub.mode")
+    token = params.get("hub.verify_token")
+    challenge = params.get("hub.challenge")
+    
+    from fastapi.responses import JSONResponse
+    if mode == "subscribe" and token == "NutriBotStravaVerifyToken123!":
+        return JSONResponse(content={"hub.challenge": challenge})
+        
+    return JSONResponse(status_code=400, content={"error": "Invalid verification token or parameters"})
+
+@app.post("/api/strava/webhook")
+async def strava_webhook_event(request: Request):
+    """Handles background workout event triggers (POST request) from Strava."""
+    payload = await request.json()
+    print(f"Received Strava webhook payload: {payload}")
+    
+    object_type = payload.get("object_type")
+    aspect_type = payload.get("aspect_type")
+    
+    if object_type == "activity" and aspect_type == "create":
+        activity_id = payload.get("object_id")
+        owner_id = payload.get("owner_id")
+        
+        user_id = db_get_user_id_by_strava_athlete(owner_id)
+        if user_id:
+            try:
+                session = await fetch_specific_strava_activity(user_id, activity_id)
+                if session:
+                    act_key = f"{session['activity_name']} ({session['date_str']})"
+                    
+                    is_duplicate = False
+                    with get_db_connection() as conn:
+                        cursor = conn.cursor()
+                        cursor.execute(
+                            "SELECT 1 FROM burn_logs WHERE user_id = ? AND activity_name = ? AND source = 'Strava'",
+                            (user_id, act_key)
+                        )
+                        if cursor.fetchone():
+                            is_duplicate = True
+                            
+                    if not is_duplicate:
+                        db_add_burn(user_id, session['calories'], act_key, "Strava")
+                        
+                        success_card = (
+                            "⚡ <b>លំហាត់ប្រាណត្រូវបាន Sync ស្វ័យប្រវត្តពី Strava!</b>\n"
+                            "━━━━━━━━━━━━━━━━━━━━\n"
+                            f"🚴 <b>សកម្មភាព៖</b> <b>{session['activity_name']}</b> ({session['session_name']})\n"
+                            f"🔥 <b>ដុតកាឡូរី៖</b> <b>{session['calories']} kcal</b>\n"
+                            f"⏲ <b>ពេលវេលា៖</b> <b>{session['duration']} នាទី</b>\n"
+                            f"🗾 <b>ចម្ងាយ៖</b> <b>{session['distance']} គីឡូម៉ែត្រ</b>\n"
+                            "━━━━━━━━━━━━━━━━━━━━\n"
+                            "លំហាត់ប្រាណថ្មីរបស់អ្នក ត្រូវបានបញ្ចូលទៅក្នុងកំណត់ត្រាថ្ងៃនេះដោយស្វ័យប្រវត្ត! 💪"
+                        )
+                        await bot.send_message(user_id, success_card)
+                        print(f"Successfully auto-synced webhook activity {activity_id} for user {user_id}")
+            except Exception as e:
+                print(f"Error processing Strava webhook activity {activity_id} for user {user_id}: {e}")
+                
+    return {"status": "ok"}
+
 @app.get("/")
 async def root_index():
     """Simple aesthetic landing page confirming serverless function status."""
@@ -3508,6 +3721,7 @@ async def root_index():
             "webhook": "/api/webhook (POST only)",
             "setup": "/api/setup (GET to bind webhook)",
             "health": "/api/health (GET to check credentials)",
-            "cron_reminders": "/api/cron_reminders (GET triggered by Vercel Cron)"
+            "cron_reminders": "/api/cron_reminders (GET triggered by Vercel Cron)",
+            "strava_setup_webhook": "/api/strava/setup_webhook (GET to register Strava webhook)"
         }
     }
