@@ -17,6 +17,15 @@ app = FastAPI(
     version="1.4.0"
 )
 
+from fastapi.middleware.cors import CORSMiddleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 # ---------------------------------------------------------
 # Pydantic Schemas for Gemini Structured Output
 # ---------------------------------------------------------
@@ -561,6 +570,22 @@ def db_check_today_nosweet(user_id: int) -> bool:
     except Exception as e:
         print(f"Error checking today's nosweet log for {user_id}: {e}")
     return False
+
+def db_remove_today_nosweet(user_id: int):
+    """Deletes today's 'no sweet' log for a user in Cambodian Time (ICT, UTC+7)."""
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                DELETE FROM nosweet_logs 
+                WHERE user_id = ? AND date(timestamp, '+7 hours') = date('now', '+7 hours')
+                """,
+                (user_id,)
+            )
+            conn.commit()
+    except Exception as e:
+        print(f"Error removing today's no sweet for user {user_id}: {e}")
 
 def db_get_weekly_nosweet(user_id: int, start_date_str: str, end_date_str: str) -> list[str]:
     """Retrieves all dates (YYYY-MM-DD in Cambodia ICT) where the user successfully logged /nosweet in the given date range (inclusive)."""
@@ -4012,6 +4037,259 @@ async def strava_webhook_event(request: Request):
                 print(f"Error processing Strava webhook activity {activity_id} for user {user_id}: {e}")
                 
     return {"status": "ok"}
+
+# ---------------------------------------------------------
+# Telegram Bot Mini App (TMA) Endpoints
+# ---------------------------------------------------------
+
+@app.get("/api/tma/dashboard")
+async def tma_get_dashboard(user_id: int):
+    # Retrieve user profile and daily targets
+    profile = db_get_user_profile(user_id)
+    goal = db_get_user_goal(user_id)
+    goal_type = profile.get("goal_type", "maintain") if profile else "maintain"
+    
+    # Retrieve today's meals and cals
+    today_meals, total_cals = db_get_today_meals(user_id)
+    
+    # Retrieve today's burn
+    total_burn = db_get_today_burn(user_id)
+    
+    # Check nosweet challenge
+    no_sweet_today = db_check_today_nosweet(user_id)
+    
+    return {
+        "user_id": user_id,
+        "goal": goal,
+        "goal_type": goal_type,
+        "profile": profile,
+        "today_meals": today_meals,
+        "total_cals": total_cals,
+        "total_burn": total_burn,
+        "no_sweet_today": no_sweet_today
+    }
+
+class TMAMealRequest(BaseModel):
+    user_id: int
+    food_description: str
+    custom_date: str = None
+
+@app.post("/api/tma/meal")
+async def tma_add_meal(req: TMAMealRequest):
+    # Process the food description using Gemini and save it to database
+    gemini_key = os.getenv("GEMINI_API_KEY")
+    if not gemini_key:
+        return {"ok": False, "error": "Gemini API key is not configured."}
+        
+    client = genai.Client()
+    user_model = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+    
+    profile = db_get_user_profile(req.user_id)
+    if profile:
+        profile_context = (
+            f"The user is a {profile['gender']}, {profile['age']} years old, {profile['height']:.1f} cm tall, "
+            f"weighing {profile['weight']:.1f} kg. Their physical activity level is mapped as '{profile['activity']}'. "
+            f"Their daily budget goal is {profile['daily_calorie_budget']} Cal and their goal type is '{profile['goal_type']}'."
+        )
+    else:
+        profile_context = "The user is a general individual with a daily budget of 2000 Cal aiming to maintain weight."
+        
+    logging_time_context = "The user is logging a meal via their Telegram Mini App."
+    if req.custom_date:
+        logging_time_context = f"The user is retroactively logging for the Cambodia local date {req.custom_date}."
+
+    TEXT_SYSTEM_PROMPT = (
+        "You are a professional nutrition expert and health coach. Analyze the food description text provided and estimate its "
+        "nutritional details (calories in Cal, protein/fat/carbs/sugar in grams).\n"
+        f"User Health Context: {profile_context}\n"
+        f"Logging Context: {logging_time_context}\n"
+        "YOU MUST RESPOND ENTIRELY IN KHMER LANGUAGE. The `food_name` field must be written in beautiful Khmer script.\n"
+        "Provide a highly personalized coaching and health recommendation (in the `coaching_recommendation` field) "
+        "in Khmer tailored specifically to this user's profile, goal, and the logging context.\n"
+        "CRITICAL SECRECY RULE: You know the user's age, weight, height, and calorie target budget from the User Health Context, BUT YOU MUST KEEP THEM SECRET. Never mention or repeat their age, weight, height, or daily calorie goal in your coaching_recommendation text response. Focus purely on qualitative health insights, digestion, macronutrients, and advice.\n"
+        "Do NOT recite or repeat raw numbers (like '150 Cal' or '10g protein') inside the coaching recommendation text.\n"
+        "If the text does not describe any food, or you cannot identify any food, "
+        "you MUST set the `confidence_score` to less than 0.5 (e.g. 0.0 to 0.4), "
+        "and you can set the `food_name` to 'មិនមែនជាអាហារ ឬរកមិនឃើញ'."
+    )
+    
+    try:
+        response = client.models.generate_content(
+            model=user_model,
+            contents=f"Analyze the following food description and return its nutrition facts in Khmer: {req.food_description}",
+            config=types.GenerateContentConfig(
+                system_instruction=TEXT_SYSTEM_PROMPT,
+                response_mime_type="application/json",
+                response_schema=FoodAnalysis,
+            ),
+        )
+        
+        analysis = FoodAnalysis.model_validate_json(response.text)
+        if analysis.confidence_score < 0.5:
+            return {"ok": False, "error": "រកមិនឃើញអាហារ ឬបរិមាណមិនច្បាស់លាស់។"}
+            
+        inserted_meal_id = db_add_meal(req.user_id, analysis, req.custom_date)
+        return {
+            "ok": True,
+            "meal": {
+                "meal_id": inserted_meal_id,
+                "food_name": analysis.food_name,
+                "calories": analysis.calories,
+                "protein": analysis.protein,
+                "fat": analysis.fat,
+                "carbs": analysis.carbs,
+                "sugar": analysis.sugar,
+                "coaching_recommendation": analysis.coaching_recommendation
+            }
+        }
+    except Exception as e:
+        print(f"Error in TMA add meal: {e}")
+        return {"ok": False, "error": str(e)}
+
+class TMABurnRequest(BaseModel):
+    user_id: int
+    calories: int
+    activity_name: str = 'Manual'
+    custom_date: str = None
+
+@app.post("/api/tma/burn")
+async def tma_add_burn(req: TMABurnRequest):
+    try:
+        if req.calories <= 0 or req.calories > 10000:
+            return {"ok": False, "error": "កាឡូរីមិនត្រឹមត្រូវ។"}
+            
+        db_add_burn(req.user_id, req.calories, req.activity_name, 'Manual', req.custom_date)
+        return {"ok": True}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+class TMAWeightRequest(BaseModel):
+    user_id: int
+    weight: float
+
+@app.post("/api/tma/weight")
+async def tma_update_weight(req: TMAWeightRequest):
+    try:
+        profile = db_get_user_profile(req.user_id)
+        if not profile:
+            db_register_user(req.user_id)
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    INSERT OR REPLACE INTO users (user_id, gender, age, height, weight, activity, goal_type, daily_calorie_budget)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (req.user_id, "male", 25, 170, req.weight, "moderate", "weight_loss", 2000)
+                )
+                conn.commit()
+        else:
+            gender = profile["gender"]
+            height = profile["height"]
+            age = profile["age"]
+            activity = profile["activity"]
+            goal_type = profile["goal_type"]
+            
+            if gender == "male":
+                bmr = 10 * req.weight + 6.25 * height - 5 * age + 5
+            else:
+                bmr = 10 * req.weight + 6.25 * height - 5 * age - 161
+                
+            multiplier = 1.2
+            if activity == 'sedentary': multiplier = 1.2
+            elif activity == 'light': multiplier = 1.375
+            elif activity == 'moderate': multiplier = 1.465
+            elif activity == 'active': multiplier = 1.55
+            elif activity == 'very_active': multiplier = 1.725
+            
+            offset = 0
+            if goal_type == 'mild_loss': offset = -250
+            elif goal_type == 'weight_loss': offset = -500
+            elif goal_type == 'extreme_loss': offset = -1000
+            
+            new_goal = max(1200, int(bmr * multiplier) + offset)
+            
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "UPDATE users SET weight = ?, daily_calorie_budget = ? WHERE user_id = ?",
+                    (req.weight, new_goal, req.user_id)
+                )
+                conn.commit()
+                
+        return {"ok": True, "new_goal": db_get_user_goal(req.user_id)}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+class TMAProfileRequest(BaseModel):
+    user_id: int
+    gender: str
+    age: int
+    height: float
+    weight: float
+    activity: str
+    goal_type: str
+
+@app.post("/api/tma/profile")
+async def tma_update_profile(req: TMAProfileRequest):
+    try:
+        if req.gender == "male":
+            bmr = 10 * req.weight + 6.25 * req.height - 5 * req.age + 5
+        else:
+            bmr = 10 * req.weight + 6.25 * req.height - 5 * req.age - 161
+            
+        multiplier = 1.2
+        if req.activity == 'sedentary': multiplier = 1.2
+        elif req.activity == 'light': multiplier = 1.375
+        elif req.activity == 'moderate': multiplier = 1.465
+        elif req.activity == 'active': multiplier = 1.55
+        elif req.activity == 'very_active': multiplier = 1.725
+        
+        offset = 0
+        if req.goal_type == 'mild_loss': offset = -250
+        elif req.goal_type == 'weight_loss': offset = -500
+        elif req.goal_type == 'extreme_loss': offset = -1000
+        
+        new_goal = max(1200, int(bmr * multiplier) + offset)
+        
+        db_register_user(req.user_id)
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT OR REPLACE INTO users (user_id, gender, age, height, weight, activity, goal_type, daily_calorie_budget)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (req.user_id, req.gender, req.age, req.height, req.weight, req.activity, req.goal_type, new_goal)
+            )
+            conn.commit()
+            
+        return {"ok": True, "new_goal": new_goal}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+class TMANosweetRequest(BaseModel):
+    user_id: int
+    no_sweet: bool
+
+@app.post("/api/tma/nosweet")
+async def tma_toggle_nosweet(req: TMANosweetRequest):
+    try:
+        if req.no_sweet:
+            db_add_nosweet_log(req.user_id)
+        else:
+            db_remove_today_nosweet(req.user_id)
+        return {"ok": True}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+@app.delete("/api/tma/delete_meal")
+async def tma_delete_meal(user_id: int, meal_id: int):
+    try:
+        db_delete_meal(user_id, meal_id)
+        return {"ok": True}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
 
 @app.get("/")
 async def root_index():
