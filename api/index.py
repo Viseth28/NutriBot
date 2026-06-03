@@ -56,9 +56,8 @@ def get_db_connection() -> libsql.Connection:
         raise ValueError("Missing database environment variables: TURSO_DATABASE_URL or TURSO_AUTH_TOKEN.")
     return libsql.connect(database=url, auth_token=auth_token)
 
-@app.on_event("startup")
-def startup_event():
-    """Auto-bootstrap SQLite tables in Turso on serverless invocation startup."""
+def db_initialize_schema():
+    """Bootstraps/Updates database tables and schema version checks."""
     try:
         url = os.getenv("TURSO_DATABASE_URL")
         auth_token = os.getenv("TURSO_AUTH_TOKEN")
@@ -187,6 +186,11 @@ def startup_event():
             print("🚀 Turso SQLite schemas auto-initialized successfully!")
     except Exception as e:
         print(f"⚠️ Database auto-initialization failed: {e}")
+
+@app.on_event("startup")
+def startup_event():
+    """Skip schema initialization on startup to optimize cold start performance."""
+    print("🚀 FastAPI startup completed. Schema initialization deferred.")
 
 def db_register_user(user_id: int):
     """Ensures a user exists in the users table with a default goal of 2000 Cal."""
@@ -3681,6 +3685,9 @@ async def telegram_webhook(request: Request):
 @app.get("/api/setup")
 async def setup_webhook(request: Request):
     """Utility route to bind this deployment's endpoint to Telegram Webhook."""
+    # Ensure database schema is bootstrapped/updated
+    db_initialize_schema()
+    
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     if not token:
         return {"ok": False, "error": "TELEGRAM_BOT_TOKEN environment variable is not configured."}
@@ -4050,20 +4057,102 @@ async def strava_webhook_event(request: Request):
 
 @app.get("/api/tma/dashboard")
 async def tma_get_dashboard(user_id: int):
-    # Retrieve user profile and daily targets
-    profile = db_get_user_profile(user_id)
-    goal = db_get_user_goal(user_id)
-    goal_type = profile.get("goal_type", "maintain") if profile else "maintain"
+    # Ensure the user is registered (1 transaction, done inline)
+    import datetime
+    now_kh = datetime.datetime.utcnow() + datetime.timedelta(hours=7)
+    date_str = now_kh.strftime("%Y-%m-%d")
     
-    # Retrieve today's meals and cals
-    today_meals, total_cals = db_get_today_meals(user_id)
+    profile = None
+    goal = 2000
+    goal_type = "maintain"
+    today_meals = []
+    total_cals = 0
+    total_burn = 0
+    no_sweet_today = False
     
-    # Retrieve today's burn
-    total_burn = db_get_today_burn(user_id)
-    
-    # Check nosweet challenge
-    no_sweet_today = db_check_today_nosweet(user_id)
-    
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Ensure user exists in users table with a default goal of 2000 Cal
+            cursor.execute(
+                "INSERT OR IGNORE INTO users (user_id, daily_calorie_goal) VALUES (?, 2000)",
+                (user_id,)
+            )
+            conn.commit()
+            
+            # 1. Query user profile
+            cursor.execute(
+                "SELECT gender, age, height, weight, activity, goal_type, daily_calorie_budget FROM users WHERE user_id = ?",
+                (user_id,)
+            )
+            row = cursor.fetchone()
+            if row and row[0] is not None:
+                profile = {
+                    "gender": row[0],
+                    "age": row[1],
+                    "height": row[2],
+                    "weight": row[3],
+                    "activity": row[4],
+                    "goal_type": row[5],
+                    "daily_calorie_budget": row[6]
+                }
+                goal_type = row[5] or "maintain"
+                goal = row[6] or 2000
+            else:
+                # If profile not set, try to get just the goal
+                cursor.execute("SELECT daily_calorie_goal FROM users WHERE user_id = ?", (user_id,))
+                goal_row = cursor.fetchone()
+                if goal_row:
+                    goal = goal_row[0] or 2000
+            
+            # 2. Query today's meals
+            cursor.execute(
+                """
+                SELECT meal_id, food_name, calories, protein, fat, carbs, sugar, timestamp
+                FROM meals
+                WHERE user_id = ? AND date(timestamp, '+7 hours') = ?
+                ORDER BY timestamp DESC
+                """,
+                (user_id, date_str)
+            )
+            rows = cursor.fetchall()
+            for r in rows:
+                today_meals.append({
+                    "meal_id": r[0],
+                    "food_name": r[1],
+                    "calories": r[2],
+                    "protein": r[3],
+                    "fat": r[4],
+                    "carbs": r[5],
+                    "sugar": r[6],
+                    "timestamp": r[7]
+                })
+                total_cals += r[2]
+                
+            # 3. Query today's burn
+            cursor.execute(
+                "SELECT SUM(calories_burned) FROM burn_logs WHERE user_id = ? AND date(timestamp, '+7 hours') = ?",
+                (user_id, date_str)
+            )
+            burn_row = cursor.fetchone()
+            if burn_row and burn_row[0] is not None:
+                total_burn = int(burn_row[0])
+                
+            # 4. Check today's nosweet challenge
+            cursor.execute(
+                """
+                SELECT 1 FROM nosweet_logs 
+                WHERE user_id = ? AND date(timestamp, '+7 hours') = ?
+                LIMIT 1
+                """,
+                (user_id, date_str)
+            )
+            no_sweet_today = cursor.fetchone() is not None
+            
+    except Exception as e:
+        print(f"Error loading dashboard data for user {user_id}: {e}")
+        
     return {
         "user_id": user_id,
         "goal": goal,
