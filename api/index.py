@@ -18,6 +18,8 @@ app = FastAPI(
 )
 
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -25,6 +27,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+miniapp_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "miniapp")
+app.mount("/miniapp", StaticFiles(directory=miniapp_dir, html=True), name="miniapp")
+
 
 # ---------------------------------------------------------
 # Pydantic Schemas for Gemini Structured Output

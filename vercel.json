@@ -2,6 +2,14 @@
   "version": 2,
   "rewrites": [
     {
+      "source": "/miniapp",
+      "destination": "/api/index.py"
+    },
+    {
+      "source": "/miniapp/(.*)",
+      "destination": "/api/index.py"
+    },
+    {
       "source": "/api/(.*)",
       "destination": "/api/index.py"
     }
