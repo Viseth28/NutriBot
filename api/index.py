@@ -1956,7 +1956,7 @@ async def handle_telegram_update(payload: dict):
                             
                             activity_date = session.get('activity_date')
                             # Cambodia today
-                            import datetime
+                            # import datetime (removed local import to prevent shadowing global name)
                             now_kh = datetime.datetime.utcnow() + datetime.timedelta(hours=7)
                             today_str = now_kh.strftime("%Y-%m-%d")
                             
@@ -2053,7 +2053,7 @@ async def handle_telegram_update(payload: dict):
             try:
                 db_add_burn(user_id, calories, 'Manual', 'Manual', custom_date)
                 if custom_date:
-                    import datetime
+                    # import datetime (removed local import to prevent shadowing global name)
                     now_kh = datetime.datetime.utcnow() + datetime.timedelta(hours=7)
                     date_parts = custom_date.split('-')
                     formatted_display_date = f"{date_parts[2]}-{date_parts[1]}-{date_parts[0]}"
