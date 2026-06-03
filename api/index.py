@@ -208,26 +208,86 @@ def db_update_user_goal(user_id: int, goal: int):
         cursor.execute("UPDATE users SET daily_calorie_goal = ? WHERE user_id = ?", (goal, user_id))
         conn.commit()
 
-def db_add_meal(user_id: int, analysis: FoodAnalysis) -> int:
+def parse_custom_date(token: str) -> str | None:
+    """Parses a relative or absolute date token and returns YYYY-MM-DD format (Cambodia local time)."""
+    token = token.strip().lower()
+    import datetime
+    import re
+    # Cambodia local time is UTC+7
+    now_cambodia = datetime.datetime.utcnow() + datetime.timedelta(hours=7)
+    
+    if token in ["yesterday", "ម្សិលមិញ"]:
+        target_date = now_cambodia - datetime.timedelta(days=1)
+        return target_date.strftime("%Y-%m-%d")
+    elif token in ["ម្សិលម្ងៃ", "ម្សិលម្ង៉ៃ", "ម្សិលមិញមួយថ្ងៃ"]:
+        target_date = now_cambodia - datetime.timedelta(days=2)
+        return target_date.strftime("%Y-%m-%d")
+    elif token in ["today", "ថ្ងៃនេះ"]:
+        return now_cambodia.strftime("%Y-%m-%d")
+        
+    # Check DD-MM-YYYY or DD/MM/YYYY
+    m1 = re.match(r"^(\d{1,2})[-/](\d{1,2})[-/](\d{2,4})$", token)
+    if m1:
+        day, month, year = int(m1.group(1)), int(m1.group(2)), int(m1.group(3))
+        if year < 100:
+            year += 2000
+        try:
+            dt = datetime.date(year, month, day)
+            return dt.strftime("%Y-%m-%d")
+        except ValueError:
+            return None
+            
+    # Check YYYY-MM-DD or YYYY/MM/DD
+    m2 = re.match(r"^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$", token)
+    if m2:
+        year, month, day = int(m2.group(1)), int(m2.group(2)), int(m2.group(3))
+        try:
+            dt = datetime.date(year, month, day)
+            return dt.strftime("%Y-%m-%d")
+        except ValueError:
+            return None
+            
+    return None
+
+def db_add_meal(user_id: int, analysis: FoodAnalysis, custom_date: str = None) -> int:
     """Saves analyzed meal data into Turso and returns the inserted meal_id."""
     db_register_user(user_id)
     with get_db_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute(
-            """
-            INSERT INTO meals (user_id, food_name, calories, protein, fat, carbs, sugar)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                user_id,
-                analysis.food_name,
-                analysis.calories,
-                analysis.protein,
-                analysis.fat,
-                analysis.carbs,
-                analysis.sugar
+        if custom_date:
+            timestamp = f"{custom_date} 05:00:00"
+            cursor.execute(
+                """
+                INSERT INTO meals (user_id, food_name, calories, protein, fat, carbs, sugar, timestamp)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    user_id,
+                    analysis.food_name,
+                    analysis.calories,
+                    analysis.protein,
+                    analysis.fat,
+                    analysis.carbs,
+                    analysis.sugar,
+                    timestamp
+                )
             )
-        )
+        else:
+            cursor.execute(
+                """
+                INSERT INTO meals (user_id, food_name, calories, protein, fat, carbs, sugar)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    user_id,
+                    analysis.food_name,
+                    analysis.calories,
+                    analysis.protein,
+                    analysis.fat,
+                    analysis.carbs,
+                    analysis.sugar
+                )
+            )
         conn.commit()
         return cursor.lastrowid
 
@@ -255,15 +315,22 @@ def db_delete_today_meals(user_id: int):
         )
         conn.commit()
 
-def db_add_burn(user_id: int, calories: int, activity_name: str = 'Manual', source: str = 'Manual') -> int:
+def db_add_burn(user_id: int, calories: int, activity_name: str = 'Manual', source: str = 'Manual', custom_date: str = None) -> int:
     """Saves calories burned into Turso and returns the inserted burn_id."""
     db_register_user(user_id)
     with get_db_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute(
-            "INSERT INTO burn_logs (user_id, calories_burned, activity_name, source) VALUES (?, ?, ?, ?)",
-            (user_id, calories, activity_name, source)
-        )
+        if custom_date:
+            timestamp = f"{custom_date} 05:00:00"
+            cursor.execute(
+                "INSERT INTO burn_logs (user_id, calories_burned, activity_name, source, timestamp) VALUES (?, ?, ?, ?, ?)",
+                (user_id, calories, activity_name, source, timestamp)
+            )
+        else:
+            cursor.execute(
+                "INSERT INTO burn_logs (user_id, calories_burned, activity_name, source) VALUES (?, ?, ?, ?)",
+                (user_id, calories, activity_name, source)
+            )
         conn.commit()
         return cursor.lastrowid
 
@@ -378,22 +445,61 @@ def db_delete_strava_tokens(user_id: int):
         cursor.execute("DELETE FROM strava_tokens WHERE user_id = ?", (user_id,))
         conn.commit()
 
-def db_get_today_burn(user_id: int) -> int:
-    """Aggregates all calories burned today (UTC date) for a user."""
+def db_get_day_meals(user_id: int, date_str: str) -> tuple[list[dict], int]:
+    """Retrieves all meals logged on a specific day (Cambodia ICT date YYYY-MM-DD) for a user."""
+    db_register_user(user_id)
+    meals = []
+    total_calories = 0
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT food_name, calories, protein, fat, carbs, sugar, timestamp
+                FROM meals
+                WHERE user_id = ? AND date(timestamp, '+7 hours') = ?
+                ORDER BY timestamp DESC
+                """,
+                (user_id, date_str)
+            )
+            rows = cursor.fetchall()
+            for r in rows:
+                meals.append({
+                    "food_name": r[0],
+                    "calories": r[1],
+                    "protein": r[2],
+                    "fat": r[3],
+                    "carbs": r[4],
+                    "sugar": r[5],
+                    "timestamp": r[6]
+                })
+                total_calories += r[1]
+    except Exception as e:
+        print(f"Error getting meals for user {user_id} on {date_str}: {e}")
+    return meals, total_calories
+
+def db_get_day_burn(user_id: int, date_str: str) -> int:
+    """Aggregates all calories burned on a specific day (Cambodia ICT date YYYY-MM-DD) for a user."""
     db_register_user(user_id)
     try:
         with get_db_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT SUM(calories_burned) FROM burn_logs WHERE user_id = ? AND date(timestamp, '+7 hours') = date('now', '+7 hours')",
-                (user_id,)
+                "SELECT SUM(calories_burned) FROM burn_logs WHERE user_id = ? AND date(timestamp, '+7 hours') = ?",
+                (user_id, date_str)
             )
             row = cursor.fetchone()
             if row and row[0] is not None:
                 return int(row[0])
     except Exception as e:
-        print(f"Error getting today's burn for user {user_id}: {e}")
+        print(f"Error getting burn for user {user_id} on {date_str}: {e}")
     return 0
+
+def db_get_today_burn(user_id: int) -> int:
+    """Aggregates all calories burned today (UTC date) for a user."""
+    import datetime
+    now_kh = datetime.datetime.utcnow() + datetime.timedelta(hours=7)
+    return db_get_day_burn(user_id, now_kh.strftime("%Y-%m-%d"))
 
 def db_get_weekly_stats(user_id: int, start_date_str: str, end_date_str: str) -> tuple[list[tuple[int, str]], list[tuple[int, str]]]:
     """Retrieves all meals and burn logs in the given date range (inclusive, shifted to Cambodia ICT timezone)."""
@@ -480,36 +586,9 @@ def db_get_weekly_nosweet(user_id: int, start_date_str: str, end_date_str: str) 
 
 def db_get_today_meals(user_id: int) -> tuple[list[dict], int]:
     """Retrieves all meals logged today (UTC date) for a user, returning list and count."""
-    db_register_user(user_id)
-    meals = []
-    total_calories = 0
-    try:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                """
-                SELECT food_name, calories, protein, fat, carbs, sugar, timestamp
-                FROM meals
-                WHERE user_id = ? AND date(timestamp, '+7 hours') = date('now', '+7 hours')
-                ORDER BY timestamp DESC
-                """,
-                (user_id,)
-            )
-            rows = cursor.fetchall()
-            for r in rows:
-                meals.append({
-                    "food_name": r[0],
-                    "calories": r[1],
-                    "protein": r[2],
-                    "fat": r[3],
-                    "carbs": r[4],
-                    "sugar": r[5],
-                    "timestamp": r[6]
-                })
-                total_calories += r[1]
-    except Exception as e:
-        print(f"Error retrieving today's meals for user {user_id}: {e}")
-    return meals, total_calories
+    import datetime
+    now_kh = datetime.datetime.utcnow() + datetime.timedelta(hours=7)
+    return db_get_day_meals(user_id, now_kh.strftime("%Y-%m-%d"))
 
 def db_add_reminder(user_id: int, reminder_time: str):
     """Adds a new reminder for a user. Stored as HH:MM string in ICT (UTC+7)."""
@@ -1396,12 +1475,48 @@ async def handle_telegram_update(payload: dict):
                     "📝 <b>របៀបកត់ត្រាអាហារដោយផ្ទាល់៖</b>\n"
                     "━━━━━━━━━━━━━━━━━━━━\n"
                     "សូមវាយ៖ <b>/log [ឈ្មោះអាហារ និងបរិមាណ]</b>\n"
-                    "ឧទាហរណ៍៖ <b>/log បាយស ២០០ក្រាម សាច់មាន់ ១០០ក្រាម</b>"
+                    "ឧទាហរណ៍៖ <b>/log បាយស ២០០ក្រាម សាច់មាន់ ១០០ក្រាម</b>\n\n"
+                    "📅 <b>កត់ត្រាសម្រាប់ថ្ងៃផ្សេងទៀត (បើភ្លេច)៖</b>\n"
+                    "សូមវាយ៖ <b>/log [កាលបរិច្ឆេទ/ម្សិលមិញ] [ឈ្មោះអាហារ]</b>\n"
+                    "ឧទាហរណ៍៖ <b>/log ម្សិលមិញ បាយឆាសាច់ជ្រូក</b>\n"
+                    "ឬ <b>/log 02-06-2026 បាយឆាសាច់ជ្រូក</b>"
                 )
                 return
             
+            # Check if the first word is a date or relative day keyword
+            sub_parts = parts[1].split(maxsplit=1)
+            custom_date = None
             food_description = parts[1]
-            ack = await bot.send_message(chat_id, "🔍 <i>កំពុងវិភាគការពណ៌នាអាហាររបស់អ្នក... សូមរង់ចាំមួយភ្លែត។</i>")
+            date_token_src = None
+            
+            if len(sub_parts) > 0:
+                potential_date = sub_parts[0]
+                parsed_date = parse_custom_date(potential_date)
+                if parsed_date:
+                    custom_date = parsed_date
+                    date_token_src = potential_date
+                    if len(sub_parts) < 2:
+                        await bot.send_message(
+                            chat_id,
+                            f"📅 <b>កត់ត្រាសម្រាប់ថ្ងៃ៖ {custom_date}</b>\n"
+                            "━━━━━━━━━━━━━━━━━━━━\n"
+                            "សូមបញ្ចូលឈ្មោះអាហារបន្ថែមផងដែរ។\n"
+                            f"ឧទាហរណ៍៖ <b>/log {potential_date} បាយឆាសាច់ជ្រូក</b>"
+                        )
+                        return
+                    food_description = sub_parts[1]
+            
+            display_date = custom_date if custom_date else "ថ្ងៃនេះ"
+            if date_token_src and date_token_src.lower() in ["yesterday", "ម្សិលមិញ"]:
+                display_date = "ម្សិលមិញ"
+            elif date_token_src and date_token_src.lower() in ["ម្សិលម្ងៃ", "ម្សិលម្ង៉ៃ", "ម្សិលមិញមួយថ្ងៃ"]:
+                display_date = "ម្សិលម្ងៃ"
+                
+            ack = await bot.send_message(
+                chat_id, 
+                f"🔍 <i>កំពុងវិភាគការពណ៌នាអាហារសម្រាប់ {display_date}... សូមរង់ចាំមួយភ្លែត។</i>" if custom_date 
+                else "🔍 <i>កំពុងវិភាគការពណ៌នាអាហាររបស់អ្នក... សូមរង់ចាំមួយភ្លែត។</i>"
+            )
             ack_message_id = ack.get("result", {}).get("message_id")
             
             try:
@@ -1417,7 +1532,7 @@ async def handle_telegram_update(payload: dict):
                     if fallback not in models_to_try:
                         models_to_try.append(fallback)
                         
-                # Get current Cambodia ICT local time for time-aware coaching context
+                # Get current Cambodia ICT local time or custom date context
                 now_utc = datetime.datetime.utcnow()
                 now_cambodia = now_utc + datetime.timedelta(hours=7)
                 time_str = now_cambodia.strftime("%I:%M %p")
@@ -1446,14 +1561,18 @@ async def handle_telegram_update(payload: dict):
                 else:
                     profile_context = "The user is a general individual with a daily budget of 2000 kcal aiming to maintain weight."
 
+                logging_time_context = f"Current Cambodia local time is {time_str} on {day_name} ({period_kh})."
+                if custom_date:
+                    logging_time_context = f"The user is retroactively logging for the Cambodia local date {custom_date}."
+
                 TEXT_SYSTEM_PROMPT = (
                     "You are a professional nutrition expert and health coach. Analyze the food description text provided and estimate its "
                     "nutritional details (calories in kcal, protein/fat/carbs/sugar in grams).\n"
                     f"User Health Context: {profile_context}\n"
-                    f"Logging Context: Current Cambodia local time is {time_str} on {day_name} ({period_kh}).\n"
+                    f"Logging Context: {logging_time_context}\n"
                     "YOU MUST RESPOND ENTIRELY IN KHMER LANGUAGE. The `food_name` field must be written in beautiful Khmer script.\n"
                     "Provide a highly personalized coaching and health recommendation (in the `coaching_recommendation` field) "
-                    "in Khmer tailored specifically to this user's profile, goal, and the logging time of day (e.g. if it's late-night, gently advise on digestion, sleep quality, and healthy alternatives; if it's morning, encourage fueling up for a strong start).\n"
+                    "in Khmer tailored specifically to this user's profile, goal, and the logging context.\n"
                     "CRITICAL SECRECY RULE: You know the user's age, weight, height, and calorie target budget from the User Health Context, BUT YOU MUST KEEP THEM SECRET. Never mention or repeat their age, weight, height, or daily calorie goal in your coaching_recommendation text response. Focus purely on qualitative health insights, digestion, macronutrients, and positive coaching advice.\n"
                     "Do NOT recite or repeat raw numbers (like '150 kcal' or '10g protein') inside the coaching recommendation text since those are already clearly displayed in the summary card.\n"
                     "If the text does not describe any food, or you cannot identify any food, "
@@ -1500,22 +1619,35 @@ async def handle_telegram_update(payload: dict):
                         await bot.send_message(chat_id, err_msg)
                     return
                     
-                inserted_meal_id = db_add_meal(user_id, analysis)
+                inserted_meal_id = db_add_meal(user_id, analysis, custom_date)
                 await sync_meal_to_google_fit(user_id, analysis)
                 
-                # Fetch remaining calories
-                today_meals, total_cals = db_get_today_meals(user_id)
-                total_burn = db_get_today_burn(user_id)
+                # Fetch remaining calories for custom date or today
+                if custom_date:
+                    today_meals, total_cals = db_get_day_meals(user_id, custom_date)
+                    total_burn = db_get_day_burn(user_id, custom_date)
+                else:
+                    today_meals, total_cals = db_get_today_meals(user_id)
+                    total_burn = db_get_today_burn(user_id)
+                    
                 goal = db_get_user_goal(user_id)
                 remaining = goal - total_cals
                 balance_emoji = "⚖️" if remaining >= 0 else "🚨"
                 remaining_str = f"សល់ <b>{remaining} kcal</b>" if remaining >= 0 else f"លើស <b>{-remaining} kcal</b>"
                 
+                # Format custom display date
+                if custom_date:
+                    date_parts = custom_date.split('-')
+                    formatted_display_date = f"{date_parts[2]}-{date_parts[1]}-{date_parts[0]}"
+                else:
+                    formatted_display_date = now_cambodia.strftime('%d-%m-%Y')
+                
                 result_card = (
                     "🍳 <b>លទ្ធផលវិភាគអាហារូបត្ថម្ភ (Direct Log)</b>\n"
                     "━━━━━━━━━━━━━━━━━━━━\n"
                     f"🥗 <b>អាហារ៖</b> <b>{analysis.food_name}</b>\n"
-                    f"📊 <b>ភាពជឿជាក់៖</b> <b>{analysis.confidence_score * 100:.0f}%</b>\n\n"
+                    f"📊 <b>ភាពជឿជាក់៖</b> <b>{analysis.confidence_score * 100:.0f}%</b>\n"
+                    f"📅 <b>កាលបរិច្ឆេទ៖</b> <b>{formatted_display_date}</b>\n\n"
                     f"🔥 <b>ថាមពល៖</b> <b>{analysis.calories} kcal</b>\n"
                     "━━━━━━━━━━━━━━━━━━━━\n"
                     f"🥩 <b>ប្រូតេអ៊ីន៖</b> <b>{analysis.protein}g</b>\n"
@@ -1524,7 +1656,7 @@ async def handle_telegram_update(payload: dict):
                     f"🍬 <b>ក្នុងនោះជាតិស្ករ៖</b> <b>{analysis.sugar}g</b>\n"
                     "━━━━━━━━━━━━━━━━━━━━\n"
                     f"🏃 <b>បានដុតរំលាយ៖</b> <b>{total_burn} kcal</b>\n"
-                    f"{balance_emoji} <b>កាឡូរីថ្ងៃនេះ៖</b> <b>{total_cals}</b> / <b>{goal} kcal</b> ({remaining_str})\n"
+                    f"{balance_emoji} <b>កាឡូរី ({display_date})៖</b> <b>{total_cals}</b> / <b>{goal} kcal</b> ({remaining_str})\n"
                     "━━━━━━━━━━━━━━━━━━━━\n"
                     f"💡 <b>ការណែនាំពីគ្រូ៖</b>\n"
                     f"« {analysis.coaching_recommendation} »\n"
@@ -1536,7 +1668,7 @@ async def handle_telegram_update(payload: dict):
                     "inline_keyboard": [
                         [
                             {
-                                "text": "❌ លុបចេញពីកំណត់ត្រាថ្ងៃនេះ",
+                                "text": "❌ លុបកំណត់ត្រានេះ",
                                 "callback_data": f"delete_meal:{inserted_meal_id}"
                             }
                         ]
@@ -1561,7 +1693,7 @@ async def handle_telegram_update(payload: dict):
                 else:
                     await bot.send_message(chat_id, fail_msg)
             return
-
+            
         elif text.startswith("/goal"):
             parts = text.split()
             if len(parts) < 2:
@@ -1819,19 +1951,45 @@ async def handle_telegram_update(payload: dict):
                             else:
                                 await bot.send_message(chat_id, duplicate_card)
                         else:
-                            # Not a duplicate, log it!
-                            db_add_burn(user_id, session['calories'], act_key, "Strava")
+                            # Not a duplicate, log it with its actual activity date
+                            db_add_burn(user_id, session['calories'], act_key, "Strava", custom_date=session.get('activity_date'))
                             
-                            success_card = (
-                                "🔥 <b>បានទាញយកលំហាត់ប្រាណចុងក្រោយជោគជ័យ!</b>\n"
-                                "━━━━━━━━━━━━━━━━━━━━\n"
-                                f"🚴 <b>សកម្មភាព៖</b> <b>{session['activity_name']}</b> ({session['session_name']})\n"
-                                f"🔥 <b>ដុតកាឡូរី៖</b> <b>{session['calories']} kcal</b>\n"
-                                f"⏲ <b>ពេលវេលា៖</b> <b>{session['duration']} នាទី</b>\n"
-                                f"🗾 <b>ចម្ងាយ៖</b> <b>{session['distance']} គីឡូម៉ែត្រ</b>\n"
-                                "━━━━━━━━━━━━━━━━━━━━\n"
-                                "សកម្មភាពនេះត្រូវបានបន្ថែមទៅក្នុងកំណត់ត្រាដុតកាឡូរីថ្ងៃនេះរបស់អ្នករួចរាល់ហើយ! 💪"
-                            )
+                            activity_date = session.get('activity_date')
+                            # Cambodia today
+                            import datetime
+                            now_kh = datetime.datetime.utcnow() + datetime.timedelta(hours=7)
+                            today_str = now_kh.strftime("%Y-%m-%d")
+                            
+                            if activity_date and activity_date != today_str:
+                                # Format display date
+                                date_parts = activity_date.split('-')
+                                formatted_display_date = f"{date_parts[2]}-{date_parts[1]}-{date_parts[0]}"
+                                display_day = f"ថ្ងៃ {formatted_display_date}"
+                                yesterday_str = (now_kh - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
+                                if activity_date == yesterday_str:
+                                    display_day = "ម្សិលមិញ"
+                                
+                                success_card = (
+                                    "🔥 <b>បានទាញយកលំហាត់ប្រាណចុងក្រោយជោគជ័យ!</b>\n"
+                                    "━━━━━━━━━━━━━━━━━━━━\n"
+                                    f"🚴 <b>សកម្មភាព៖</b> <b>{session['activity_name']}</b> ({session['session_name']})\n"
+                                    f"🔥 <b>ដុតកាឡូរី៖</b> <b>{session['calories']} kcal</b>\n"
+                                    f"⏲ <b>ពេលវេលា៖</b> <b>{session['duration']} នាទី</b>\n"
+                                    f"🗾 <b>ចម្ងាយ៖</b> <b>{session['distance']} គីឡូម៉ែត្រ</b>\n"
+                                    "━━━━━━━━━━━━━━━━━━━━\n"
+                                    f"សកម្មភាពនេះត្រូវបានបន្ថែមទៅក្នុងកំណត់ត្រាដុតកាឡូរី <b>{display_day}</b> របស់អ្នករួចរាល់ហើយ! 💪"
+                                )
+                            else:
+                                success_card = (
+                                    "🔥 <b>បានទាញយកលំហាត់ប្រាណចុងក្រោយជោគជ័យ!</b>\n"
+                                    "━━━━━━━━━━━━━━━━━━━━\n"
+                                    f"🚴 <b>សកម្មភាព៖</b> <b>{session['activity_name']}</b> ({session['session_name']})\n"
+                                    f"🔥 <b>ដុតកាឡូរី៖</b> <b>{session['calories']} kcal</b>\n"
+                                    f"⏲ <b>ពេលវេលា៖</b> <b>{session['duration']} នាទី</b>\n"
+                                    f"🗾 <b>ចម្ងាយ៖</b> <b>{session['distance']} គីឡូម៉ែត្រ</b>\n"
+                                    "━━━━━━━━━━━━━━━━━━━━\n"
+                                    "សកម្មភាពនេះត្រូវបានបន្ថែមទៅក្នុងកំណត់ត្រាដុតកាឡូរីថ្ងៃនេះរបស់អ្នករួចរាល់ហើយ! 💪"
+                                )
                             if loading_msg_id:
                                 await bot.edit_message(chat_id, loading_msg_id, success_card)
                             else:
@@ -1864,27 +2022,67 @@ async def handle_telegram_update(payload: dict):
                         await bot.send_message(chat_id, error_msg)
                 return
             
-            try:
-                calories = int(parts[1])
-                if calories <= 0 or calories > 10000:
-                    raise ValueError()
-                
-                db_add_burn(user_id, calories, 'Manual', 'Manual')
-                await bot.send_message(
-                    chat_id,
-                    "🔥 <b>បានកត់ត្រាការដុតរំលាយជោគជ័យ!</b>\n"
-                    "━━━━━━━━━━━━━━━━━━━━\n"
-                    f"🏃 <b>ថ្ងៃនេះអ្នកបានដុតរំលាយ៖</b> <b>{calories} kcal</b>\n"
-                    "💪 រក្សាសកម្មភាពរាងកាយល្អនេះបន្តទៀត!"
-                )
-            except ValueError:
+            # Parse tokens to find custom_date and calories
+            tokens = parts[1:]
+            calories = None
+            custom_date = None
+            date_token_src = None
+            
+            for tok in tokens:
+                parsed_d = parse_custom_date(tok)
+                if parsed_d:
+                    custom_date = parsed_d
+                    date_token_src = tok
+                else:
+                    try:
+                        val = int(tok)
+                        if 0 < val <= 10000:
+                            calories = val
+                    except ValueError:
+                        pass
+                        
+            if calories is None:
                 await bot.send_message(
                     chat_id,
                     "⚠️ <b>ចំនួនកាឡូរីមិនត្រឹមត្រូវទេ!</b>\n"
-                    "សូមវាយបញ្ចូលចំនួនលេខវិជ្ជមានសមរម្យ។ ឧទាហរណ៍៖ <b>/burn 350</b>"
+                    "សូមវាយបញ្ចូលចំនួនលេខវិជ្ជមានសមរម្យ។ ឧទាហរណ៍៖ <b>/burn 350</b>\n"
+                    "ឬកត់ត្រាសម្រាប់ថ្ងៃមុន៖ <b>/burn 350 ម្សិលមិញ</b>"
                 )
+                return
+                
+            try:
+                db_add_burn(user_id, calories, 'Manual', 'Manual', custom_date)
+                if custom_date:
+                    import datetime
+                    now_kh = datetime.datetime.utcnow() + datetime.timedelta(hours=7)
+                    date_parts = custom_date.split('-')
+                    formatted_display_date = f"{date_parts[2]}-{date_parts[1]}-{date_parts[0]}"
+                    display_day = f"ថ្ងៃ {formatted_display_date}"
+                    if date_token_src and date_token_src.lower() in ["yesterday", "ម្សិលមិញ"]:
+                        display_day = "ម្សិលមិញ"
+                    elif date_token_src and date_token_src.lower() in ["ម្សិលម្ងៃ", "ម្សិលម្ង៉ៃ", "ម្សិលមិញមួយថ្ងៃ"]:
+                        display_day = "ម្សិលម្ងៃ"
+                    
+                    await bot.send_message(
+                        chat_id,
+                        "🔥 <b>បានកត់ត្រាការដុតរំលាយជោគជ័យ!</b>\n"
+                        "━━━━━━━━━━━━━━━━━━━━\n"
+                        f"🏃 <b>ថ្ងៃ {display_day} អ្នកបានដុតរំលាយ៖</b> <b>{calories} kcal</b>\n"
+                        "💪 រក្សាសកម្មភាពរាងកាយល្អនេះបន្តទៀត!"
+                    )
+                else:
+                    await bot.send_message(
+                        chat_id,
+                        "🔥 <b>បានកត់ត្រាការដុតរំលាយជោគជ័យ!</b>\n"
+                        "━━━━━━━━━━━━━━━━━━━━\n"
+                        f"🏃 <b>ថ្ងៃនេះអ្នកបានដុតរំលាយ៖</b> <b>{calories} kcal</b>\n"
+                        "💪 រក្សាសកម្មភាពរាងកាយល្អនេះបន្តទៀត!"
+                    )
+            except Exception as e:
+                print(f"Error saving manual burn: {e}")
+                await bot.send_message(chat_id, f"⚠️ <b>ការកត់ត្រាមានបញ្ហា៖</b> {e}")
             return
-
+            
         elif text.startswith("/strava"):
             client_id = os.getenv("STRAVA_CLIENT_ID")
             client_secret = os.getenv("STRAVA_CLIENT_SECRET")
@@ -2232,8 +2430,31 @@ async def handle_telegram_update(payload: dict):
 
     # 2. Handle photo upload (compressed photo OR uncompressed document image)
     elif photo or (document and document.get("mime_type", "").startswith("image/")):
+        # Extract the caption if any and parse potential custom date
+        caption = message.get("caption", "").strip() if message else ""
+        custom_date = None
+        user_food_context = ""
+        
+        if caption:
+            caption_parts = caption.split(maxsplit=1)
+            if len(caption_parts) > 0:
+                potential_date = caption_parts[0]
+                parsed_date = parse_custom_date(potential_date)
+                if parsed_date:
+                    custom_date = parsed_date
+                    if len(caption_parts) > 1:
+                        user_food_context = caption_parts[1]
+                else:
+                    user_food_context = caption
+                    
+        display_date = custom_date if custom_date else "ថ្ងៃនេះ"
+        
         # Send initial premium loading visual to user immediately
-        ack = await bot.send_message(chat_id, "🔍 <i>កំពុងវិភាគរូបភាពអាហាររបស់អ្នក... សូមរង់ចាំមួយភ្លែត។</i>")
+        ack = await bot.send_message(
+            chat_id, 
+            f"🔍 <i>កំពុងវិភាគរូបភាពអាហារសម្រាប់ {display_date}... សូមរង់ចាំមួយភ្លែត។</i>" if custom_date
+            else "🔍 <i>កំពុងវិភាគរូបភាពអាហាររបស់អ្នក... សូមរង់ចាំមួយភ្លែត។</i>"
+        )
         ack_message_id = ack.get("result", {}).get("message_id")
 
         try:
@@ -2288,14 +2509,18 @@ async def handle_telegram_update(payload: dict):
             else:
                 profile_context = "The user is a general individual with a daily budget of 2000 kcal aiming to maintain weight."
 
+            logging_time_context = f"Current Cambodia local time is {time_str} on {day_name} ({period_kh})."
+            if custom_date:
+                logging_time_context = f"The user is retroactively logging for the Cambodia local date {custom_date}."
+
             photo_system_prompt = (
                 "You are a professional nutrition expert and health coach. Analyze the food in the provided image and estimate its "
                 "nutritional details (calories in kcal, protein/fat/carbs/sugar in grams).\n"
                 f"User Health Context: {profile_context}\n"
-                f"Logging Context: Current Cambodia local time is {time_str} on {day_name} ({period_kh}).\n"
+                f"Logging Context: {logging_time_context}\n"
                 "YOU MUST RESPOND ENTIRELY IN KHMER LANGUAGE. The `food_name` field must be written in beautiful Khmer script.\n"
                 "Provide a highly personalized coaching and health recommendation (in the `coaching_recommendation` field) "
-                "in Khmer tailored specifically to this user's profile, goal, and the logging time of day (e.g. if it's late-night, gently advise on digestion, sleep quality, and healthy alternatives; if it's morning, encourage fueling up for a strong start).\n"
+                "in Khmer tailored specifically to this user's profile, goal, and the logging context.\n"
                 "CRITICAL SECRECY RULE: You know the user's age, weight, height, and calorie target budget from the User Health Context, BUT YOU MUST KEEP THEM SECRET. Never mention or repeat their age, weight, height, or daily calorie goal in your coaching_recommendation text response. Focus purely on qualitative health insights, digestion, macronutrients, and positive coaching advice.\n"
                 "Do NOT recite or repeat raw numbers (like '150 kcal' or '10g protein') inside the coaching recommendation text since those are already clearly displayed in the summary card.\n"
                 "If the image does not show any food, or you cannot identify any food, "
@@ -2315,7 +2540,7 @@ async def handle_telegram_update(payload: dict):
                         model=current_model,
                         contents=[
                             types.Part.from_bytes(data=image_bytes, mime_type=mime_type),
-                            "Analyze the food in this image and return its nutrition facts in Khmer."
+                            f"Analyze the food in this image and return its nutrition facts in Khmer. Description context from user: {user_food_context}" if user_food_context else "Analyze the food in this image and return its nutrition facts in Khmer."
                         ],
                         config=types.GenerateContentConfig(
                             system_instruction=photo_system_prompt,
@@ -2351,23 +2576,36 @@ async def handle_telegram_update(payload: dict):
                 return
 
             # Save meal details to database and get primary key ID
-            inserted_meal_id = db_add_meal(user_id, analysis)
+            inserted_meal_id = db_add_meal(user_id, analysis, custom_date)
             await sync_meal_to_google_fit(user_id, analysis)
 
             # Fetch remaining calories
-            today_meals, total_cals = db_get_today_meals(user_id)
-            total_burn = db_get_today_burn(user_id)
+            if custom_date:
+                today_meals, total_cals = db_get_day_meals(user_id, custom_date)
+                total_burn = db_get_day_burn(user_id, custom_date)
+            else:
+                today_meals, total_cals = db_get_today_meals(user_id)
+                total_burn = db_get_today_burn(user_id)
+                
             goal = db_get_user_goal(user_id)
             remaining = goal - total_cals
             balance_emoji = "⚖️" if remaining >= 0 else "🚨"
             remaining_str = f"សល់ <b>{remaining} kcal</b>" if remaining >= 0 else f"លើស <b>{-remaining} kcal</b>"
+
+            # Format custom display date
+            if custom_date:
+                date_parts = custom_date.split('-')
+                formatted_display_date = f"{date_parts[2]}-{date_parts[1]}-{date_parts[0]}"
+            else:
+                formatted_display_date = now_cambodia.strftime('%d-%m-%Y')
 
             # Format the output beautifully using HTML tags
             result_card = (
                 "🍳 <b>លទ្ធផលវិភាគអាហារូបត្ថម្ភ</b>\n"
                 "━━━━━━━━━━━━━━━━━━━━\n"
                 f"🥗 <b>អាហារ៖</b> <b>{analysis.food_name}</b>\n"
-                f"📊 <b>ភាពជឿជាក់៖</b> <b>{analysis.confidence_score * 100:.0f}%</b>\n\n"
+                f"📊 <b>ភាពជឿជាក់៖</b> <b>{analysis.confidence_score * 100:.0f}%</b>\n"
+                f"📅 <b>កាលបរិច្ឆេទ៖</b> <b>{formatted_display_date}</b>\n\n"
                 f"🔥 <b>ថាមពល៖</b> <b>{analysis.calories} kcal</b>\n"
                 "━━━━━━━━━━━━━━━━━━━━\n"
                 f"🥩 <b>ប្រូតេអ៊ីន៖</b> <b>{analysis.protein}g</b>\n"
@@ -2376,7 +2614,7 @@ async def handle_telegram_update(payload: dict):
                 f"🍬 <b>ក្នុងនោះជាតិស្ករ៖</b> <b>{analysis.sugar}g</b>\n"
                 "━━━━━━━━━━━━━━━━━━━━\n"
                 f"🏃 <b>បានដុតរំលាយ៖</b> <b>{total_burn} kcal</b>\n"
-                f"{balance_emoji} <b>កាឡូរីថ្ងៃនេះ៖</b> <b>{total_cals}</b> / <b>{goal} kcal</b> ({remaining_str})\n"
+                f"{balance_emoji} <b>កាឡូរី ({display_date})៖</b> <b>{total_cals}</b> / <b>{goal} kcal</b> ({remaining_str})\n"
                 "━━━━━━━━━━━━━━━━━━━━\n"
                 f"💡 <b>ការណែនាំពីគ្រូ៖</b>\n"
                 f"« {analysis.coaching_recommendation} »\n"
@@ -2389,7 +2627,7 @@ async def handle_telegram_update(payload: dict):
                 "inline_keyboard": [
                     [
                         {
-                            "text": "❌ លុបចេញពីកំណត់ត្រាថ្ងៃនេះ",
+                            "text": "❌ លុបកំណត់ត្រានេះ",
                             "callback_data": f"delete_meal:{inserted_meal_id}"
                         }
                     ]
@@ -2414,7 +2652,6 @@ async def handle_telegram_update(payload: dict):
             else:
                 await bot.send_message(chat_id, fail_msg)
             return
-
     else:
         # Acknowledge unhandled update types safely
         await bot.send_message(
@@ -2561,7 +2798,7 @@ async def get_valid_strava_token(user_id: int, token_info: dict) -> str:
     return token_info.get("access_token")
 
 async def fetch_latest_strava_activity(user_id: int) -> dict:
-    """Fetches the single most recent exercise session and its exact calories from Strava."""
+    """Fetches the single most recent exercise session and its exact calories from Strava in the last 7 days."""
     token_info = db_get_strava_tokens(user_id)
     if not token_info:
         return None
@@ -2573,11 +2810,12 @@ async def fetch_latest_strava_activity(user_id: int) -> dict:
     import datetime
     import time
     
-    # Fetch today's activities in Cambodia time (ICT - UTC+7)
+    # Fetch last 7 days of activities in Cambodia time (ICT - UTC+7)
     now_kh = datetime.datetime.utcnow() + datetime.timedelta(hours=7)
     start_of_today_kh = datetime.datetime(now_kh.year, now_kh.month, now_kh.day, 0, 0, 0)
-    start_of_today_utc = start_of_today_kh - datetime.timedelta(hours=7)
-    after_timestamp = int(start_of_today_utc.replace(tzinfo=datetime.timezone.utc).timestamp())
+    start_of_7days_ago_kh = start_of_today_kh - datetime.timedelta(days=7)
+    start_of_7days_ago_utc = start_of_7days_ago_kh - datetime.timedelta(hours=7)
+    after_timestamp = int(start_of_7days_ago_utc.replace(tzinfo=datetime.timezone.utc).timestamp())
     
     headers = {
         "Authorization": f"Bearer {access_token}"
@@ -2594,9 +2832,9 @@ async def fetch_latest_strava_activity(user_id: int) -> dict:
             activities = resp.json()
             
             if not activities:
-                raise Exception("គ្មានសកម្មភាពលំហាត់ប្រាណដែលបានកត់ត្រាក្នុងថ្ងៃនេះទេ! សូមកត់ត្រាការហាត់ប្រាណនៅលើកម្មវិធី Strava ថ្ងៃនេះជាមុនសិន។")
+                raise Exception("គ្មានសកម្មភាពលំហាត់ប្រាណដែលបានកត់ត្រាក្នុងរយៈពេល ៧ថ្ងៃចុងក្រោយនេះទេ! សូមកត់ត្រាការហាត់ប្រាណនៅលើកម្មវិធី Strava ជាមុនសិន។")
             
-            # Strava API returns activities descending (latest first), so index 0 is already the most recent activity today
+            # Strava API returns activities descending (latest first), so index 0 is already the most recent activity
             latest_act = activities[0]
             
             activity_id = latest_act.get("id")
@@ -2635,15 +2873,19 @@ async def fetch_latest_strava_activity(user_id: int) -> dict:
                 calories_burned = int(duration_minutes * 6.5) # standard estimate
                 
             start_date_local = latest_act.get("start_date_local")
+            activity_date = None
             if start_date_local:
                 try:
                     clean_date = start_date_local.replace("Z", "")
                     dt = datetime.datetime.fromisoformat(clean_date)
                     date_str = dt.strftime("%d-%m-%Y %I:%M %p")
+                    activity_date = dt.strftime("%Y-%m-%d")
                 except Exception:
                     date_str = datetime.datetime.utcnow().strftime("%d-%m-%Y %I:%M %p")
+                    activity_date = (datetime.datetime.utcnow() + datetime.timedelta(hours=7)).strftime("%Y-%m-%d")
             else:
                 date_str = datetime.datetime.utcnow().strftime("%d-%m-%Y %I:%M %p")
+                activity_date = (datetime.datetime.utcnow() + datetime.timedelta(hours=7)).strftime("%Y-%m-%d")
                 
             return {
                 "activity_type": act_type,
@@ -2653,6 +2895,7 @@ async def fetch_latest_strava_activity(user_id: int) -> dict:
                 "duration": duration_minutes,
                 "distance": distance_km,
                 "date_str": date_str,
+                "activity_date": activity_date,
                 "activity_id": activity_id
             }
     except Exception as e:
@@ -3582,15 +3825,19 @@ async def fetch_specific_strava_activity(user_id: int, activity_id: int) -> dict
                 calories_burned = int(duration_minutes * 6.5)
                 
             start_date_local = act.get("start_date_local")
+            activity_date = None
             if start_date_local:
                 try:
                     clean_date = start_date_local.replace("Z", "")
                     dt = datetime.datetime.fromisoformat(clean_date)
                     date_str = dt.strftime("%d-%m-%Y %I:%M %p")
+                    activity_date = dt.strftime("%Y-%m-%d")
                 except Exception:
                     date_str = datetime.datetime.utcnow().strftime("%d-%m-%Y %I:%M %p")
+                    activity_date = (datetime.datetime.utcnow() + datetime.timedelta(hours=7)).strftime("%Y-%m-%d")
             else:
                 date_str = datetime.datetime.utcnow().strftime("%d-%m-%Y %I:%M %p")
+                activity_date = (datetime.datetime.utcnow() + datetime.timedelta(hours=7)).strftime("%Y-%m-%d")
                 
             return {
                 "activity_type": act_type,
@@ -3600,6 +3847,7 @@ async def fetch_specific_strava_activity(user_id: int, activity_id: int) -> dict
                 "duration": duration_minutes,
                 "distance": distance_km,
                 "date_str": date_str,
+                "activity_date": activity_date,
                 "activity_id": activity_id
             }
     except Exception as e:
@@ -3720,18 +3968,42 @@ async def strava_webhook_event(request: Request):
                             is_duplicate = True
                             
                     if not is_duplicate:
-                        db_add_burn(user_id, session['calories'], act_key, "Strava")
+                        db_add_burn(user_id, session['calories'], act_key, "Strava", custom_date=session.get('activity_date'))
                         
-                        success_card = (
-                            "⚡ <b>លំហាត់ប្រាណត្រូវបាន Sync ស្វ័យប្រវត្តពី Strava!</b>\n"
-                            "━━━━━━━━━━━━━━━━━━━━\n"
-                            f"🚴 <b>សកម្មភាព៖</b> <b>{session['activity_name']}</b> ({session['session_name']})\n"
-                            f"🔥 <b>ដុតកាឡូរី៖</b> <b>{session['calories']} kcal</b>\n"
-                            f"⏲ <b>ពេលវេលា៖</b> <b>{session['duration']} នាទី</b>\n"
-                            f"🗾 <b>ចម្ងាយ៖</b> <b>{session['distance']} គីឡូម៉ែត្រ</b>\n"
-                            "━━━━━━━━━━━━━━━━━━━━\n"
-                            "លំហាត់ប្រាណថ្មីរបស់អ្នក ត្រូវបានបញ្ចូលទៅក្នុងកំណត់ត្រាថ្ងៃនេះដោយស្វ័យប្រវត្ត! 💪"
-                        )
+                        activity_date = session.get('activity_date')
+                        import datetime
+                        now_kh = datetime.datetime.utcnow() + datetime.timedelta(hours=7)
+                        today_str = now_kh.strftime("%Y-%m-%d")
+                        
+                        if activity_date and activity_date != today_str:
+                            date_parts = activity_date.split('-')
+                            formatted_display_date = f"{date_parts[2]}-{date_parts[1]}-{date_parts[0]}"
+                            display_day = f"ថ្ងៃ {formatted_display_date}"
+                            yesterday_str = (now_kh - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
+                            if activity_date == yesterday_str:
+                                display_day = "ម្សិលមិញ"
+                                
+                            success_card = (
+                                "⚡ <b>លំហាត់ប្រាណត្រូវបាន Sync ស្វ័យប្រវត្តពី Strava!</b>\n"
+                                "━━━━━━━━━━━━━━━━━━━━\n"
+                                f"🚴 <b>សកម្មភាព៖</b> <b>{session['activity_name']}</b> ({session['session_name']})\n"
+                                f"🔥 <b>ដុតកាឡូរី៖</b> <b>{session['calories']} kcal</b>\n"
+                                f"⏲ <b>ពេលវេលា៖</b> <b>{session['duration']} នាទី</b>\n"
+                                f"🗾 <b>ចម្ងាយ៖</b> <b>{session['distance']} គីឡូម៉ែត្រ</b>\n"
+                                "━━━━━━━━━━━━━━━━━━━━\n"
+                                f"លំហាត់ប្រាណថ្មីរបស់អ្នក ត្រូវបានបញ្ចូលទៅក្នុងកំណត់ត្រា <b>{display_day}</b> ដោយស្វ័យប្រវត្ត! 💪"
+                            )
+                        else:
+                            success_card = (
+                                "⚡ <b>លំហាត់ប្រាណត្រូវបាន Sync ស្វ័យប្រវត្តពី Strava!</b>\n"
+                                "━━━━━━━━━━━━━━━━━━━━\n"
+                                f"🚴 <b>សកម្មភាព៖</b> <b>{session['activity_name']}</b> ({session['session_name']})\n"
+                                f"🔥 <b>ដុតកាឡូរី៖</b> <b>{session['calories']} kcal</b>\n"
+                                f"⏲ <b>ពេលវេលា៖</b> <b>{session['duration']} នាទី</b>\n"
+                                f"🗾 <b>ចម្ងាយ៖</b> <b>{session['distance']} គីឡូម៉ែត្រ</b>\n"
+                                "━━━━━━━━━━━━━━━━━━━━\n"
+                                "លំហាត់ប្រាណថ្មីរបស់អ្នក ត្រូវបានបញ្ចូលទៅក្នុងកំណត់ត្រាថ្ងៃនេះដោយស្វ័យប្រវត្ត! 💪"
+                            )
                         await bot.send_message(user_id, success_card)
                         print(f"Successfully auto-synced webhook activity {activity_id} for user {user_id}")
             except Exception as e:
