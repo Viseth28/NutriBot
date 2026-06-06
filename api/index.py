@@ -4386,6 +4386,140 @@ async def tma_delete_meal(user_id: int, meal_id: int):
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
+@app.get("/api/tma/weekly")
+async def tma_get_weekly(user_id: int):
+    import datetime
+    now_utc = datetime.datetime.utcnow()
+    now_cambodia = now_utc + datetime.timedelta(hours=7)
+    
+    current_weekday = now_cambodia.weekday()
+    monday_date = now_cambodia.date() - datetime.timedelta(days=current_weekday)
+    week_dates = [monday_date + datetime.timedelta(days=i) for i in range(7)]
+    start_date_str = week_dates[0].strftime("%Y-%m-%d")
+    end_date_str = week_dates[-1].strftime("%Y-%m-%d")
+    
+    goal = db_get_user_goal(user_id)
+    
+    days_data = []
+    day_names_kh = {
+        0: "ច័ន្ទ",
+        1: "អង្គារ",
+        2: "ពុធ",
+        3: "ព្រហស្បតិ៍",
+        4: "សុក្រ",
+        5: "សៅរ៍",
+        6: "អាទិត្យ"
+    }
+    day_names_en = {
+        0: "Mon",
+        1: "Tue",
+        2: "Wed",
+        3: "Thu",
+        4: "Fri",
+        5: "Sat",
+        6: "Sun"
+    }
+    
+    for idx, d in enumerate(week_dates):
+        days_data.append({
+            "date": d.strftime("%Y-%m-%d"),
+            "day_name_en": day_names_en.get(idx),
+            "day_name_kh": day_names_kh.get(idx),
+            "eaten": 0,
+            "burned": 0,
+            "no_sweet": False,
+            "meals": []
+        })
+        
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            # 1. Fetch meals for the week
+            cursor.execute(
+                """
+                SELECT meal_id, food_name, calories, protein, fat, carbs, sugar, timestamp, date(timestamp, '+7 hours')
+                FROM meals
+                WHERE user_id = ? AND date(timestamp, '+7 hours') >= ? AND date(timestamp, '+7 hours') <= ?
+                ORDER BY timestamp DESC
+                """,
+                (user_id, start_date_str, end_date_str)
+            )
+            meal_rows = cursor.fetchall()
+            
+            # 2. Fetch burns for the week
+            cursor.execute(
+                """
+                SELECT calories_burned, date(timestamp, '+7 hours')
+                FROM burn_logs
+                WHERE user_id = ? AND date(timestamp, '+7 hours') >= ? AND date(timestamp, '+7 hours') <= ?
+                """,
+                (user_id, start_date_str, end_date_str)
+            )
+            burn_rows = cursor.fetchall()
+            
+            # 3. Fetch nosweet challenge logs for the week
+            cursor.execute(
+                """
+                SELECT DISTINCT date(timestamp, '+7 hours')
+                FROM nosweet_logs
+                WHERE user_id = ? AND date(timestamp, '+7 hours') >= ? AND date(timestamp, '+7 hours') <= ?
+                """,
+                (user_id, start_date_str, end_date_str)
+            )
+            nosweet_rows = cursor.fetchall()
+            nosweet_dates = {row[0] for row in nosweet_rows}
+            
+            # Process meals
+            for r in meal_rows:
+                meal_id, food_name, calories, protein, fat, carbs, sugar, timestamp, m_date = r
+                # Find matching day
+                for day in days_data:
+                    if day["date"] == m_date:
+                        day["eaten"] += calories
+                        
+                        # Parse time
+                        time_str = "12:00"
+                        if timestamp:
+                            try:
+                                parts = timestamp.split(" ")
+                                if len(parts) > 1:
+                                    time_str = parts[1][:5]
+                            except Exception:
+                                pass
+                        
+                        day["meals"].append({
+                            "meal_id": meal_id,
+                            "food_name": food_name,
+                            "calories": calories,
+                            "protein": protein,
+                            "fat": fat,
+                            "carbs": carbs,
+                            "sugar": sugar,
+                            "time": time_str
+                        })
+            
+            # Process burns
+            for cals, b_date in burn_rows:
+                for day in days_data:
+                    if day["date"] == b_date:
+                        day["burned"] += cals
+            
+            # Process nosweet
+            for day in days_data:
+                day["no_sweet"] = day["date"] in nosweet_dates
+                
+    except Exception as e:
+        print(f"Error retrieving weekly summary for user {user_id}: {e}")
+        
+    return {
+        "user_id": user_id,
+        "start_date": start_date_str,
+        "end_date": end_date_str,
+        "daily_goal": goal,
+        "days": days_data
+    }
+
 @app.get("/")
 async def root_index():
     """Simple aesthetic landing page confirming serverless function status."""
