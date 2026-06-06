@@ -1,5 +1,6 @@
 import os
 import datetime
+from typing import Optional
 import httpx
 import libsql
 import mimetypes
@@ -4167,7 +4168,7 @@ async def tma_get_dashboard(user_id: int):
 class TMAMealRequest(BaseModel):
     user_id: int
     food_description: str
-    custom_date: str = None
+    custom_date: Optional[str] = None
 
 @app.post("/api/tma/meal")
 async def tma_add_meal(req: TMAMealRequest):
@@ -4245,7 +4246,7 @@ class TMABurnRequest(BaseModel):
     user_id: int
     calories: int
     activity_name: str = 'Manual'
-    custom_date: str = None
+    custom_date: Optional[str] = None
 
 @app.post("/api/tma/burn")
 async def tma_add_burn(req: TMABurnRequest):
@@ -4528,7 +4529,7 @@ class TMACustomMealRequest(BaseModel):
     fat: int
     carbs: int
     sugar: int
-    custom_date: str = None
+    custom_date: Optional[str] = None
 
 @app.post("/api/tma/custom_meal")
 async def tma_add_custom_meal(req: TMACustomMealRequest):
