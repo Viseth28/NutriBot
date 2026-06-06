@@ -4520,6 +4520,82 @@ async def tma_get_weekly(user_id: int):
         "days": days_data
     }
 
+class TMACustomMealRequest(BaseModel):
+    user_id: int
+    food_name: str
+    calories: int
+    protein: int
+    fat: int
+    carbs: int
+    sugar: int
+    custom_date: str = None
+
+@app.post("/api/tma/custom_meal")
+async def tma_add_custom_meal(req: TMACustomMealRequest):
+    try:
+        analysis = FoodAnalysis(
+            food_name=req.food_name,
+            calories=req.calories,
+            protein=req.protein,
+            fat=req.fat,
+            carbs=req.carbs,
+            sugar=req.sugar,
+            confidence_score=1.0,
+            coaching_recommendation="បន្ថែមដោយផ្ទាល់ពីការស្វែងរក"
+        )
+        inserted_id = db_add_meal(req.user_id, analysis, req.custom_date)
+        return {"ok": True, "meal_id": inserted_id}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+@app.get("/api/tma/search_food")
+async def tma_search_food(user_id: int, query: str):
+    gemini_key = os.getenv("GEMINI_API_KEY")
+    if not gemini_key:
+        return {"ok": False, "error": "Gemini API key is not configured."}
+        
+    client = genai.Client()
+    user_model = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+    
+    TEXT_SYSTEM_PROMPT = (
+        "You are a professional nutrition expert and calorie dictionary. Estimate the average nutritional facts "
+        "for a standard normal single serving portion of the food queried by the user.\n"
+        "The output must include estimated calories in Cal, and protein, fat, carbs, sugar in grams.\n"
+        "YOU MUST RESPOND ENTIRELY IN KHMER. The `food_name` field must be written in beautiful Khmer script.\n"
+        "Provide a useful brief coaching advice recommendation (in the `coaching_recommendation` field) "
+        "in Khmer explaining the health benefits, macro distribution, or typical portion sizing of this item.\n"
+        "If the query is not a food item or you cannot find it, set `confidence_score` below 0.5."
+    )
+    
+    try:
+        response = client.models.generate_content(
+            model=user_model,
+            contents=f"Search nutrition details for food: {query}",
+            config=types.GenerateContentConfig(
+                system_instruction=TEXT_SYSTEM_PROMPT,
+                response_mime_type="application/json",
+                response_schema=FoodAnalysis,
+            ),
+        )
+        analysis = FoodAnalysis.model_validate_json(response.text)
+        if analysis.confidence_score < 0.5:
+            return {"ok": False, "error": "រកមិនឃើញអាហារ ឬព័ត៌មានមិនច្បាស់លាស់។"}
+            
+        return {
+            "ok": True,
+            "food": {
+                "food_name": analysis.food_name,
+                "calories": analysis.calories,
+                "protein": analysis.protein,
+                "fat": analysis.fat,
+                "carbs": analysis.carbs,
+                "sugar": analysis.sugar,
+                "coaching_recommendation": analysis.coaching_recommendation
+            }
+        }
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
 @app.get("/")
 async def root_index():
     """Simple aesthetic landing page confirming serverless function status."""
