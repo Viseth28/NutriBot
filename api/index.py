@@ -1,5 +1,7 @@
 import os
 import datetime
+import json
+import base64
 from typing import Optional
 import httpx
 import libsql
@@ -45,6 +47,155 @@ class FoodAnalysis(BaseModel):
     sugar: int = Field(description="Estimated sugar content in grams (g).")
     confidence_score: float = Field(description="Model confidence from 0.0 (not food/unknown) to 1.0 (highly confident food).")
     coaching_recommendation: str = Field(description="A highly personalized, actionable health/coaching recommendation in Khmer language tailored specifically to this user's profile and goal (e.g., protein density, health tips, fullness, weight loss suitability).")
+
+
+async def run_llm_generation(
+    prompt: str,
+    system_instruction: str,
+    response_schema=None,
+    image_bytes: bytes = None,
+    mime_type: str = None
+) -> str:
+    """
+    Central LLM Router:
+    Uses OpenRouter (Free Llama 3 / Mistral) if OPENROUTER_API_KEY is configured.
+    Otherwise falls back to Google GenAI with robust model chains.
+    """
+    openrouter_key = os.getenv("OPENROUTER_API_KEY")
+    if openrouter_key:
+        headers = {
+            "Authorization": f"Bearer {openrouter_key}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://github.com/Viseth28/NutriBot",
+            "X-Title": "NutriBot"
+        }
+        
+        # Select models
+        if image_bytes:
+            models_to_try = [
+                "meta-llama/llama-3.2-11b-vision-instruct:free",
+                "openrouter/free"
+            ]
+        else:
+            models_to_try = [
+                "meta-llama/llama-3-8b-instruct:free",
+                "mistralai/mistral-7b-instruct:free",
+                "openrouter/free"
+            ]
+            
+        messages = [
+            {"role": "system", "content": system_instruction}
+        ]
+        
+        if image_bytes:
+            img_b64 = base64.b64encode(image_bytes).decode("utf-8")
+            if not mime_type:
+                mime_type = "image/jpeg"
+            messages.append({
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:{mime_type};base64,{img_b64}"
+                        }
+                    }
+                ]
+            })
+        else:
+            messages.append({"role": "user", "content": prompt})
+            
+        if response_schema:
+            schema_fields = ""
+            for field_name, field_type in response_schema.__annotations__.items():
+                schema_fields += f"- {field_name}: ({field_type})\n"
+            messages[0]["content"] += (
+                "\n\nYOU MUST RESPOND WITH A VALID JSON OBJECT matching this schema:\n"
+                f"{schema_fields}\n"
+                "Return ONLY the raw JSON string. Do not wrap it in markdown code blocks like ```json."
+            )
+            
+        last_error = None
+        for model in models_to_try:
+            try:
+                payload = {
+                    "model": model,
+                    "messages": messages,
+                    "temperature": 0.2
+                }
+                if response_schema:
+                    payload["response_format"] = {"type": "json_object"}
+                    
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    resp = await client.post(
+                        "https://openrouter.ai/api/v1/chat/completions",
+                        json=payload,
+                        headers=headers
+                    )
+                    if resp.status_code != 200:
+                        raise ValueError(f"OpenRouter HTTP {resp.status_code}: {resp.text}")
+                    data = resp.json()
+                    choices = data.get("choices")
+                    if not choices:
+                        raise ValueError(f"Invalid OpenRouter response: {data}")
+                    content = choices[0]["message"]["content"]
+                    
+                    # Clean markdown wrapping if present
+                    content = content.replace("```json", "").replace("```html", "").replace("```", "").strip()
+                    if response_schema:
+                        json.loads(content) # Verify validity
+                    return content
+            except Exception as e:
+                last_error = e
+                print(f"⚠️ OpenRouter model {model} failed: {e}")
+                continue
+        raise ValueError(f"All OpenRouter models failed. Last error: {last_error}")
+        
+    else:
+        gemini_key = os.getenv("GEMINI_API_KEY")
+        if not gemini_key:
+            raise ValueError("Neither OPENROUTER_API_KEY nor GEMINI_API_KEY is configured.")
+        client = genai.Client()
+        user_model = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+        models_to_try = [user_model]
+        for fallback in ["gemini-2.0-flash", "gemini-1.5-flash-8b", "gemini-1.5-flash", "gemini-2.0-flash-lite"]:
+            if fallback not in models_to_try:
+                models_to_try.append(fallback)
+                
+        last_error = None
+        for current_model in models_to_try:
+            try:
+                if image_bytes:
+                    contents = [
+                        types.Part.from_bytes(data=image_bytes, mime_type=mime_type or "image/jpeg"),
+                        prompt
+                    ]
+                else:
+                    contents = prompt
+                if response_schema:
+                    config = types.GenerateContentConfig(
+                        system_instruction=system_instruction,
+                        response_mime_type="application/json",
+                        response_schema=response_schema
+                    )
+                else:
+                    config = types.GenerateContentConfig(
+                        system_instruction=system_instruction
+                    )
+                response = client.models.generate_content(
+                    model=current_model,
+                    contents=contents,
+                    config=config
+                )
+                if not response or not response.text:
+                    raise ValueError("Empty response from Gemini")
+                return response.text
+            except Exception as model_err:
+                last_error = model_err
+                print(f"⚠️ Gemini model {current_model} failed: {model_err}")
+                continue
+        raise ValueError(f"All Gemini models failed. Last error: {last_error}")
 
 
 # ---------------------------------------------------------
@@ -1264,28 +1415,10 @@ async def handle_telegram_update(payload: dict):
                     "• ..."
                 )
                 
-                response = None
-                last_error = None
-                
-                for current_model in models_to_try:
-                    try:
-                        response = client.models.generate_content(
-                            model=current_model,
-                            contents=f"Please generate my 1-day meal plan based on my profile context: {profile_context}",
-                            config=types.GenerateContentConfig(
-                                system_instruction=SUGGEST_SYSTEM_PROMPT,
-                            ),
-                        )
-                        break
-                    except Exception as model_err:
-                        last_error = model_err
-                        print(f"⚠️ Model {current_model} failed or is rate-limited: {model_err}")
-                        continue
-                        
-                if response is None:
-                    raise ValueError(f"All generative models failed. Last error: {last_error}")
-                    
-                suggested_menu = response.text
+                suggested_menu = await run_llm_generation(
+                    prompt=f"Please generate my 1-day meal plan based on my profile context: {profile_context}",
+                    system_instruction=SUGGEST_SYSTEM_PROMPT
+                )
                 
                 # Safe clean of any raw markdown wrapper leaks
                 suggested_menu = suggested_menu.replace("```html", "").replace("```", "").strip()
@@ -1627,30 +1760,12 @@ async def handle_telegram_update(payload: dict):
                     "Be realistic, objective, and estimate standard portion sizes based on the provided quantities or standard servings."
                 )
                 
-                response = None
-                last_error = None
-                
-                for current_model in models_to_try:
-                    try:
-                        response = client.models.generate_content(
-                            model=current_model,
-                            contents=f"Analyze the following food description and return its nutrition facts in Khmer: {food_description}",
-                            config=types.GenerateContentConfig(
-                                system_instruction=TEXT_SYSTEM_PROMPT,
-                                response_mime_type="application/json",
-                                response_schema=FoodAnalysis,
-                            ),
-                        )
-                        break
-                    except Exception as model_err:
-                        last_error = model_err
-                        print(f"⚠️ Model {current_model} failed or is rate-limited: {model_err}")
-                        continue
-                        
-                if response is None:
-                    raise ValueError(f"All generative models failed. Last error: {last_error}")
-                    
-                analysis = FoodAnalysis.model_validate_json(response.text)
+                response_text = await run_llm_generation(
+                    prompt=f"Analyze the following food description and return its nutrition facts in Khmer: {food_description}",
+                    system_instruction=TEXT_SYSTEM_PROMPT,
+                    response_schema=FoodAnalysis
+                )
+                analysis = FoodAnalysis.model_validate_json(response_text)
                 
                 if analysis.confidence_score < 0.5:
                     err_msg = (
@@ -2584,36 +2699,15 @@ async def handle_telegram_update(payload: dict):
                 "there's strong visual context stating otherwise."
             )
 
-            response = None
-            last_error = None
-
-            # Attempt each model in the fallback chain sequentially
-            for current_model in models_to_try:
-                try:
-                    response = client.models.generate_content(
-                        model=current_model,
-                        contents=[
-                            types.Part.from_bytes(data=image_bytes, mime_type=mime_type),
-                            f"Analyze the food in this image and return its nutrition facts in Khmer. Description context from user: {user_food_context}" if user_food_context else "Analyze the food in this image and return its nutrition facts in Khmer."
-                        ],
-                        config=types.GenerateContentConfig(
-                            system_instruction=photo_system_prompt,
-                            response_mime_type="application/json",
-                            response_schema=FoodAnalysis,
-                        ),
-                    )
-                    break
-                except Exception as model_err:
-                    last_error = model_err
-                    print(f"⚠️ Model {current_model} failed or is rate-limited: {model_err}")
-                    continue
-
-            # If all models failed
-            if response is None:
-                raise ValueError(f"All generative models failed. Last error: {last_error}")
-
-            # Validate output using Pydantic
-            analysis = FoodAnalysis.model_validate_json(response.text)
+            prompt = f"Analyze the food in this image and return its nutrition facts in Khmer. Description context from user: {user_food_context}" if user_food_context else "Analyze the food in this image and return its nutrition facts in Khmer."
+            response_text = await run_llm_generation(
+                prompt=prompt,
+                system_instruction=photo_system_prompt,
+                response_schema=FoodAnalysis,
+                image_bytes=image_bytes,
+                mime_type=mime_type
+            )
+            analysis = FoodAnalysis.model_validate_json(response_text)
 
             # Check for non-food or low confidence edge cases
             if analysis.confidence_score < 0.5:
@@ -4237,31 +4331,20 @@ async def tma_add_meal(req: TMAMealRequest):
         "and you can set the `food_name` to 'មិនមែនជាអាហារ ឬរកមិនឃើញ'."
     )
     
-    response = None
-    errors = []
-    for current_model in models_to_try:
-        try:
-            response = client.models.generate_content(
-                model=current_model,
-                contents=f"Analyze the following food description and return its nutrition facts in Khmer: {req.food_description}",
-                config=types.GenerateContentConfig(
-                    system_instruction=TEXT_SYSTEM_PROMPT,
-                    response_mime_type="application/json",
-                    response_schema=FoodAnalysis,
-                ),
-            )
-            break
-        except Exception as model_err:
-            errors.append(f"{current_model}: {str(model_err)}")
-
-    if not response:
-        combined_errors = "; ".join(errors)
-        if any(x in combined_errors for x in ["429", "RESOURCE_EXHAUSTED", "LimitExceeded", "quota"]):
+    try:
+        response_text = await run_llm_generation(
+            prompt=f"Analyze the following food description and return its nutrition facts in Khmer: {req.food_description}",
+            system_instruction=TEXT_SYSTEM_PROMPT,
+            response_schema=FoodAnalysis
+        )
+    except Exception as e:
+        err_msg = str(e)
+        if any(x in err_msg for x in ["429", "RESOURCE_EXHAUSTED", "LimitExceeded", "quota"]):
             return {"ok": False, "error": "មានបញ្ហាបច្ចេកទេសមួយបានកើតឡើងក្នុងពេលដំណើរការវិភាគការពណ៌នារបស់អ្នក។ សូមព្យាយាមម្តងទៀតនៅពេលក្រោយ។"}
-        return {"ok": False, "error": f"Gemini Error list: {combined_errors}"}
+        return {"ok": False, "error": f"LLM Error: {err_msg}"}
         
     try:
-        analysis = FoodAnalysis.model_validate_json(response.text)
+        analysis = FoodAnalysis.model_validate_json(response_text)
         if analysis.confidence_score < 0.5:
             return {"ok": False, "error": "រកមិនឃើញអាហារ ឬបរិមាណមិនច្បាស់លាស់។"}
             
@@ -4358,34 +4441,22 @@ async def tma_add_meal_photo(req: TMAMealPhotoRequest):
         "there's strong visual context stating otherwise."
     )
     
-    response = None
-    errors = []
-    for current_model in models_to_try:
-        try:
-            response = client.models.generate_content(
-                model=current_model,
-                contents=[
-                    types.Part.from_bytes(data=image_bytes, mime_type=mime_type),
-                    "Analyze the food in this image and return its nutrition facts in Khmer."
-                ],
-                config=types.GenerateContentConfig(
-                    system_instruction=photo_system_prompt,
-                    response_mime_type="application/json",
-                    response_schema=FoodAnalysis,
-                ),
-            )
-            break
-        except Exception as model_err:
-            errors.append(f"{current_model}: {str(model_err)}")
-
-    if not response:
-        combined_errors = "; ".join(errors)
-        if any(x in combined_errors for x in ["429", "RESOURCE_EXHAUSTED", "LimitExceeded", "quota"]):
+    try:
+        response_text = await run_llm_generation(
+            prompt="Analyze the food in this image and return its nutrition facts in Khmer.",
+            system_instruction=photo_system_prompt,
+            response_schema=FoodAnalysis,
+            image_bytes=image_bytes,
+            mime_type=mime_type
+        )
+    except Exception as e:
+        err_msg = str(e)
+        if any(x in err_msg for x in ["429", "RESOURCE_EXHAUSTED", "LimitExceeded", "quota"]):
             return {"ok": False, "error": "មានបញ្ហាបច្ចេកទេសមួយបានកើតឡើងក្នុងពេលដំណើរការវិភាគរូបភាពរបស់អ្នក។ សូមព្យាយាមម្តងទៀតនៅពេលក្រោយ។"}
-        return {"ok": False, "error": f"Gemini Error list: {combined_errors}"}
+        return {"ok": False, "error": f"LLM Error: {err_msg}"}
         
     try:
-        analysis = FoodAnalysis.model_validate_json(response.text)
+        analysis = FoodAnalysis.model_validate_json(response_text)
         if analysis.confidence_score < 0.5:
             return {"ok": False, "error": "រកមិនឃើញអាហារ ឬបរិមាណមិនច្បាស់លាស់នៅក្នុងរូបភាព។"}
             
@@ -4751,31 +4822,20 @@ async def tma_search_food(user_id: int, query: str):
         "If the query is not a food item or you cannot find it, set `confidence_score` below 0.5."
     )
     
-    response = None
-    errors = []
-    for current_model in models_to_try:
-        try:
-            response = client.models.generate_content(
-                model=current_model,
-                contents=f"Search nutrition details for food: {query}",
-                config=types.GenerateContentConfig(
-                    system_instruction=TEXT_SYSTEM_PROMPT,
-                    response_mime_type="application/json",
-                    response_schema=FoodAnalysis,
-                ),
-            )
-            break
-        except Exception as e:
-            errors.append(f"{current_model}: {str(e)}")
-
-    if not response:
-        combined_errors = "; ".join(errors)
-        if any(x in combined_errors for x in ["429", "RESOURCE_EXHAUSTED", "LimitExceeded", "quota"]):
+    try:
+        response_text = await run_llm_generation(
+            prompt=f"Search nutrition details for food: {query}",
+            system_instruction=TEXT_SYSTEM_PROMPT,
+            response_schema=FoodAnalysis
+        )
+    except Exception as e:
+        err_msg = str(e)
+        if any(x in err_msg for x in ["429", "RESOURCE_EXHAUSTED", "LimitExceeded", "quota"]):
             return {"ok": False, "error": "មានបញ្ហាបច្ចេកទេសមួយបានកើតឡើងក្នុងពេលដំណើរការវិភាគការពណ៌នារបស់អ្នក។ សូមព្យាយាមម្តងទៀតនៅពេលក្រោយ។"}
-        return {"ok": False, "error": f"Gemini Error list: {combined_errors}"}
+        return {"ok": False, "error": f"LLM Error: {err_msg}"}
 
     try:
-        analysis = FoodAnalysis.model_validate_json(response.text)
+        analysis = FoodAnalysis.model_validate_json(response_text)
         if analysis.confidence_score < 0.5:
             return {"ok": False, "error": "រកមិនឃើញអាហារ ឬព័ត៌មានមិនច្បាស់លាស់។"}
             
