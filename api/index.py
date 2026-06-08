@@ -4,7 +4,7 @@ from typing import Optional
 import httpx
 import libsql
 import mimetypes
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, BackgroundTasks
 from pydantic import BaseModel, Field
 from google import genai
 from google.genai import types
@@ -3696,12 +3696,12 @@ async def strava_callback(code: str, state: str, scope: str = None):
 # FastAPI Endpoints
 # ---------------------------------------------------------
 @app.post("/api/webhook")
-async def telegram_webhook(request: Request):
+async def telegram_webhook(request: Request, background_tasks: BackgroundTasks):
     """Processes incoming Telegram bot webhook updates."""
     try:
         payload = await request.json()
-        # Handle the update safely
-        await handle_telegram_update(payload)
+        # Handle the update in the background to prevent Telegram timeouts/retries
+        background_tasks.add_task(handle_telegram_update, payload)
     except Exception as e:
         print(f"Unhandled error in webhook route: {e}")
     # Always return a 200 OK to Telegram immediately to prevent webhook retry loops
