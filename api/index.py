@@ -1202,9 +1202,9 @@ async def handle_telegram_update(payload: dict):
                 
                 client = genai.Client()
                 
-                user_model = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+                user_model = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
                 models_to_try = [user_model]
-                for fallback in ["gemini-1.5-flash", "gemini-2.5-flash", "gemini-2.0-flash"]:
+                for fallback in ["gemini-2.0-flash", "gemini-1.5-flash"]:
                     if fallback not in models_to_try:
                         models_to_try.append(fallback)
                 
@@ -1564,9 +1564,9 @@ async def handle_telegram_update(payload: dict):
                 
                 client = genai.Client()
                 
-                user_model = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+                user_model = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
                 models_to_try = [user_model]
-                for fallback in ["gemini-1.5-flash", "gemini-2.5-flash", "gemini-2.0-flash"]:
+                for fallback in ["gemini-2.0-flash", "gemini-1.5-flash"]:
                     if fallback not in models_to_try:
                         models_to_try.append(fallback)
                         
@@ -2512,9 +2512,9 @@ async def handle_telegram_update(payload: dict):
             client = genai.Client()
             
             # Setup a robust fallback model chain for rate-limit / resource issues
-            user_model = os.getenv("GEMINI_MODEL", "gemini-1.5-flash") # Default to standard 1.5-flash for free quotas
+            user_model = os.getenv("GEMINI_MODEL", "gemini-2.0-flash") # Default to standard 2.0-flash for free quotas
             models_to_try = [user_model]
-            for fallback in ["gemini-1.5-flash", "gemini-2.5-flash", "gemini-2.0-flash"]:
+            for fallback in ["gemini-2.0-flash", "gemini-1.5-flash"]:
                 if fallback not in models_to_try:
                     models_to_try.append(fallback)
 
@@ -4178,7 +4178,7 @@ async def tma_add_meal(req: TMAMealRequest):
         return {"ok": False, "error": "Gemini API key is not configured."}
         
     client = genai.Client()
-    user_model = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+    user_model = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
     
     profile = db_get_user_profile(req.user_id)
     if profile:
@@ -4556,7 +4556,11 @@ async def tma_search_food(user_id: int, query: str):
         return {"ok": False, "error": "Gemini API key is not configured."}
         
     client = genai.Client()
-    user_model = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+    user_model = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+    models_to_try = [user_model]
+    for fallback in ["gemini-2.0-flash", "gemini-1.5-flash"]:
+        if fallback not in models_to_try:
+            models_to_try.append(fallback)
     
     TEXT_SYSTEM_PROMPT = (
         "You are a professional nutrition expert and calorie dictionary. Estimate the average nutritional facts "
@@ -4568,16 +4572,27 @@ async def tma_search_food(user_id: int, query: str):
         "If the query is not a food item or you cannot find it, set `confidence_score` below 0.5."
     )
     
+    response = None
+    last_error = None
+    for current_model in models_to_try:
+        try:
+            response = client.models.generate_content(
+                model=current_model,
+                contents=f"Search nutrition details for food: {query}",
+                config=types.GenerateContentConfig(
+                    system_instruction=TEXT_SYSTEM_PROMPT,
+                    response_mime_type="application/json",
+                    response_schema=FoodAnalysis,
+                ),
+            )
+            break
+        except Exception as e:
+            last_error = e
+
+    if not response:
+        return {"ok": False, "error": f"Gemini Error: {last_error}"}
+
     try:
-        response = client.models.generate_content(
-            model=user_model,
-            contents=f"Search nutrition details for food: {query}",
-            config=types.GenerateContentConfig(
-                system_instruction=TEXT_SYSTEM_PROMPT,
-                response_mime_type="application/json",
-                response_schema=FoodAnalysis,
-            ),
-        )
         analysis = FoodAnalysis.model_validate_json(response.text)
         if analysis.confidence_score < 0.5:
             return {"ok": False, "error": "រកមិនឃើញអាហារ ឬព័ត៌មានមិនច្បាស់លាស់។"}
