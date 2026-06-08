@@ -1204,7 +1204,7 @@ async def handle_telegram_update(payload: dict):
                 
                 user_model = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
                 models_to_try = [user_model]
-                for fallback in ["gemini-2.0-flash", "gemini-1.5-flash"]:
+                for fallback in ["gemini-2.0-flash", "gemini-1.5-flash-8b", "gemini-1.5-flash", "gemini-2.0-flash-lite"]:
                     if fallback not in models_to_try:
                         models_to_try.append(fallback)
                 
@@ -1566,7 +1566,7 @@ async def handle_telegram_update(payload: dict):
                 
                 user_model = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
                 models_to_try = [user_model]
-                for fallback in ["gemini-2.0-flash", "gemini-1.5-flash"]:
+                for fallback in ["gemini-2.0-flash", "gemini-1.5-flash-8b", "gemini-1.5-flash", "gemini-2.0-flash-lite"]:
                     if fallback not in models_to_try:
                         models_to_try.append(fallback)
                         
@@ -2514,7 +2514,7 @@ async def handle_telegram_update(payload: dict):
             # Setup a robust fallback model chain for rate-limit / resource issues
             user_model = os.getenv("GEMINI_MODEL", "gemini-2.0-flash") # Default to standard 2.0-flash for free quotas
             models_to_try = [user_model]
-            for fallback in ["gemini-2.0-flash", "gemini-1.5-flash"]:
+            for fallback in ["gemini-2.0-flash", "gemini-1.5-flash-8b", "gemini-1.5-flash", "gemini-2.0-flash-lite"]:
                 if fallback not in models_to_try:
                     models_to_try.append(fallback)
 
@@ -4180,7 +4180,7 @@ async def tma_add_meal(req: TMAMealRequest):
     client = genai.Client()
     user_model = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
     models_to_try = [user_model]
-    for fallback in ["gemini-2.0-flash", "gemini-1.5-flash"]:
+    for fallback in ["gemini-2.0-flash", "gemini-1.5-flash-8b", "gemini-1.5-flash", "gemini-2.0-flash-lite"]:
         if fallback not in models_to_try:
             models_to_try.append(fallback)
     
@@ -4572,7 +4572,7 @@ async def tma_search_food(user_id: int, query: str):
     client = genai.Client()
     user_model = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
     models_to_try = [user_model]
-    for fallback in ["gemini-2.0-flash", "gemini-1.5-flash"]:
+    for fallback in ["gemini-2.0-flash", "gemini-1.5-flash-8b", "gemini-1.5-flash", "gemini-2.0-flash-lite"]:
         if fallback not in models_to_try:
             models_to_try.append(fallback)
     
