@@ -4552,14 +4552,28 @@ async def tma_delete_meal(user_id: int, meal_id: int):
         return {"ok": False, "error": str(e)}
 
 @app.get("/api/tma/weekly")
-async def tma_get_weekly(user_id: int):
+async def tma_get_weekly(user_id: int, start_date: Optional[str] = None, end_date: Optional[str] = None):
     import datetime
     now_utc = datetime.datetime.utcnow()
     now_cambodia = now_utc + datetime.timedelta(hours=7)
     
-    current_weekday = now_cambodia.weekday()
-    monday_date = now_cambodia.date() - datetime.timedelta(days=current_weekday)
-    week_dates = [monday_date + datetime.timedelta(days=i) for i in range(7)]
+    if start_date and end_date:
+        try:
+            start_date_obj = datetime.datetime.strptime(start_date, "%Y-%m-%d").date()
+            end_date_obj = datetime.datetime.strptime(end_date, "%Y-%m-%d").date()
+            delta = end_date_obj - start_date_obj
+            # Cap at 45 days range to avoid database performance issues
+            days_count = min(45, max(1, delta.days + 1))
+            week_dates = [start_date_obj + datetime.timedelta(days=i) for i in range(days_count)]
+        except Exception:
+            current_weekday = now_cambodia.weekday()
+            monday_date = now_cambodia.date() - datetime.timedelta(days=current_weekday)
+            week_dates = [monday_date + datetime.timedelta(days=i) for i in range(7)]
+    else:
+        current_weekday = now_cambodia.weekday()
+        monday_date = now_cambodia.date() - datetime.timedelta(days=current_weekday)
+        week_dates = [monday_date + datetime.timedelta(days=i) for i in range(7)]
+
     start_date_str = week_dates[0].strftime("%Y-%m-%d")
     end_date_str = week_dates[-1].strftime("%Y-%m-%d")
     
@@ -4585,11 +4599,12 @@ async def tma_get_weekly(user_id: int):
         6: "Sun"
     }
     
-    for idx, d in enumerate(week_dates):
+    for d in week_dates:
+        wd = d.weekday()
         days_data.append({
             "date": d.strftime("%Y-%m-%d"),
-            "day_name_en": day_names_en.get(idx),
-            "day_name_kh": day_names_kh.get(idx),
+            "day_name_en": day_names_en.get(wd),
+            "day_name_kh": day_names_kh.get(wd),
             "eaten": 0,
             "burned": 0,
             "no_sweet": False,
