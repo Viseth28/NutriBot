@@ -4179,6 +4179,10 @@ async def tma_add_meal(req: TMAMealRequest):
         
     client = genai.Client()
     user_model = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+    models_to_try = [user_model]
+    for fallback in ["gemini-2.0-flash", "gemini-1.5-flash"]:
+        if fallback not in models_to_try:
+            models_to_try.append(fallback)
     
     profile = db_get_user_profile(req.user_id)
     if profile:
@@ -4209,17 +4213,27 @@ async def tma_add_meal(req: TMAMealRequest):
         "and you can set the `food_name` to 'មិនមែនជាអាហារ ឬរកមិនឃើញ'."
     )
     
-    try:
-        response = client.models.generate_content(
-            model=user_model,
-            contents=f"Analyze the following food description and return its nutrition facts in Khmer: {req.food_description}",
-            config=types.GenerateContentConfig(
-                system_instruction=TEXT_SYSTEM_PROMPT,
-                response_mime_type="application/json",
-                response_schema=FoodAnalysis,
-            ),
-        )
+    response = None
+    errors = []
+    for current_model in models_to_try:
+        try:
+            response = client.models.generate_content(
+                model=current_model,
+                contents=f"Analyze the following food description and return its nutrition facts in Khmer: {req.food_description}",
+                config=types.GenerateContentConfig(
+                    system_instruction=TEXT_SYSTEM_PROMPT,
+                    response_mime_type="application/json",
+                    response_schema=FoodAnalysis,
+                ),
+            )
+            break
+        except Exception as model_err:
+            errors.append(f"{current_model}: {str(model_err)}")
+
+    if not response:
+        return {"ok": False, "error": f"Gemini Error list: {'; '.join(errors)}"}
         
+    try:
         analysis = FoodAnalysis.model_validate_json(response.text)
         if analysis.confidence_score < 0.5:
             return {"ok": False, "error": "រកមិនឃើញអាហារ ឬបរិមាណមិនច្បាស់លាស់។"}
@@ -4239,7 +4253,7 @@ async def tma_add_meal(req: TMAMealRequest):
             }
         }
     except Exception as e:
-        print(f"Error in TMA add meal: {e}")
+        print(f"Error in TMA add meal validation/saving: {e}")
         return {"ok": False, "error": str(e)}
 
 class TMABurnRequest(BaseModel):
@@ -4573,7 +4587,7 @@ async def tma_search_food(user_id: int, query: str):
     )
     
     response = None
-    last_error = None
+    errors = []
     for current_model in models_to_try:
         try:
             response = client.models.generate_content(
@@ -4587,10 +4601,10 @@ async def tma_search_food(user_id: int, query: str):
             )
             break
         except Exception as e:
-            last_error = e
+            errors.append(f"{current_model}: {str(e)}")
 
     if not response:
-        return {"ok": False, "error": f"Gemini Error: {last_error}"}
+        return {"ok": False, "error": f"Gemini Error list: {'; '.join(errors)}"}
 
     try:
         analysis = FoodAnalysis.model_validate_json(response.text)
