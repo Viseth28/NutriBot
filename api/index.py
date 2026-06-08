@@ -4256,8 +4256,6 @@ async def tma_add_meal(req: TMAMealRequest):
 
     if not response:
         combined_errors = "; ".join(errors)
-        if any(x in combined_errors for x in ["429", "RESOURCE_EXHAUSTED", "LimitExceeded", "quota"]):
-            return {"ok": False, "error": "មានបញ្ហាបច្ចេកទេសមួយបានកើតឡើងក្នុងពេលដំណើរការវិភាគការពណ៌នារបស់អ្នក។ សូមព្យាយាមម្តងទៀតនៅពេលក្រោយ។"}
         return {"ok": False, "error": f"Gemini Error list: {combined_errors}"}
         
     try:
