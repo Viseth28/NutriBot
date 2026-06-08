@@ -4283,6 +4283,129 @@ async def tma_add_meal(req: TMAMealRequest):
         print(f"Error in TMA add meal validation/saving: {e}")
         return {"ok": False, "error": str(e)}
 
+class TMAMealPhotoRequest(BaseModel):
+    user_id: int
+    image_base64: str  # Data URI string: "data:image/jpeg;base64,..."
+    custom_date: Optional[str] = None
+
+@app.post("/api/tma/meal_photo")
+async def tma_add_meal_photo(req: TMAMealPhotoRequest):
+    # Process the food image using Gemini and return nutrition details
+    gemini_key = os.getenv("GEMINI_API_KEY")
+    if not gemini_key:
+        return {"ok": False, "error": "Gemini API key is not configured."}
+        
+    try:
+        header, encoded = req.image_base64.split(",", 1)
+        mime_type = header.split(";")[0].split(":")[1]
+        import base64
+        image_bytes = base64.b64decode(encoded)
+    except Exception as e:
+        return {"ok": False, "error": f"Invalid image base64 format: {str(e)}"}
+
+    client = genai.Client()
+    user_model = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+    models_to_try = [user_model]
+    for fallback in ["gemini-2.0-flash", "gemini-1.5-flash-8b", "gemini-1.5-flash", "gemini-2.0-flash-lite"]:
+        if fallback not in models_to_try:
+            models_to_try.append(fallback)
+    
+    profile = db_get_user_profile(req.user_id)
+    if profile:
+        profile_context = (
+            f"The user is a {profile['gender']}, {profile['age']} years old, {profile['height']:.1f} cm tall, "
+            f"weighing {profile['weight']:.1f} kg. Their physical activity level is mapped as '{profile['activity']}'. "
+            f"Their daily budget goal is {profile['daily_calorie_budget']} Cal and their goal type is '{profile['goal_type']}'."
+        )
+    else:
+        profile_context = "The user is a general individual with a daily budget of 2000 Cal aiming to maintain weight."
+        
+    now_utc = datetime.datetime.utcnow()
+    now_cambodia = now_utc + datetime.timedelta(hours=7)
+    time_str = now_cambodia.strftime("%I:%M %p")
+    day_name = now_cambodia.strftime("%A")
+    
+    hour = now_cambodia.hour
+    if 5 <= hour < 11:
+        period_kh = "ពេលព្រឹក (Morning)"
+    elif 11 <= hour < 14:
+        period_kh = "ពេលថ្ងៃត្រង់ (Lunch)"
+    elif 14 <= hour < 17:
+        period_kh = "ពេលរសៀល (Afternoon)"
+    elif 17 <= hour < 22:
+        period_kh = "ពេលល្ងាច/យប់ (Evening/Night)"
+    else:
+        period_kh = "ពេលយប់ជ្រៅ (Late Night)"
+
+    logging_time_context = f"Current Cambodia local time is {time_str} on {day_name} ({period_kh})."
+    if req.custom_date:
+        logging_time_context = f"The user is retroactively logging for the Cambodia local date {req.custom_date}."
+
+    photo_system_prompt = (
+        "You are a professional nutrition expert and health coach. Analyze the food in the provided image and estimate its "
+        "nutritional details (calories in Cal, protein/fat/carbs/sugar in grams).\n"
+        f"User Health Context: {profile_context}\n"
+        f"Logging Context: {logging_time_context}\n"
+        "YOU MUST RESPOND ENTIRELY IN KHMER LANGUAGE. The `food_name` field must be written in beautiful Khmer script.\n"
+        "Provide a highly personalized coaching and health recommendation (in the `coaching_recommendation` field) "
+        "in Khmer tailored specifically to this user's profile, goal, and the logging context.\n"
+        "CRITICAL SECRECY RULE: You know the user's age, weight, height, and calorie target budget from the User Health Context, BUT YOU MUST KEEP THEM SECRET. Never mention or repeat their age, weight, height, or daily calorie goal in your coaching_recommendation text response. Focus purely on qualitative health insights, digestion, macronutrients, and positive coaching advice.\n"
+        "Do NOT recite or repeat raw numbers (like '150 Cal' or '10g protein') inside the coaching recommendation text since those are already clearly displayed in the summary card.\n"
+        "If the image does not show any food, or you cannot identify any food, "
+        "you MUST set the `confidence_score` to less than 0.5 (e.g. 0.0 to 0.4), "
+        "and you can set the `food_name` to 'មិនមែនជាអាហារ ឬរកមិនឃើញ'. "
+        "Be realistic, objective, and estimate standard portion sizes for single servings unless "
+        "there's strong visual context stating otherwise."
+    )
+    
+    response = None
+    errors = []
+    for current_model in models_to_try:
+        try:
+            response = client.models.generate_content(
+                model=current_model,
+                contents=[
+                    types.Part.from_bytes(data=image_bytes, mime_type=mime_type),
+                    "Analyze the food in this image and return its nutrition facts in Khmer."
+                ],
+                config=types.GenerateContentConfig(
+                    system_instruction=photo_system_prompt,
+                    response_mime_type="application/json",
+                    response_schema=FoodAnalysis,
+                ),
+            )
+            break
+        except Exception as model_err:
+            errors.append(f"{current_model}: {str(model_err)}")
+
+    if not response:
+        combined_errors = "; ".join(errors)
+        if any(x in combined_errors for x in ["429", "RESOURCE_EXHAUSTED", "LimitExceeded", "quota"]):
+            return {"ok": False, "error": "មានបញ្ហាបច្ចេកទេសមួយបានកើតឡើងក្នុងពេលដំណើរការវិភាគរូបភាពរបស់អ្នក។ សូមព្យាយាមម្តងទៀតនៅពេលក្រោយ។"}
+        return {"ok": False, "error": f"Gemini Error list: {combined_errors}"}
+        
+    try:
+        analysis = FoodAnalysis.model_validate_json(response.text)
+        if analysis.confidence_score < 0.5:
+            return {"ok": False, "error": "រកមិនឃើញអាហារ ឬបរិមាណមិនច្បាស់លាស់នៅក្នុងរូបភាព។"}
+            
+        return {
+            "ok": True,
+            "meal": {
+                "food_name": analysis.food_name,
+                "calories": analysis.calories,
+                "protein": analysis.protein,
+                "fat": analysis.fat,
+                "carbs": analysis.carbs,
+                "sugar": analysis.sugar,
+                "coaching_recommendation": analysis.coaching_recommendation
+            }
+        }
+    except Exception as e:
+        print(f"Error in TMA meal photo validation: {e}")
+        return {"ok": False, "error": str(e)}
+
+
 class TMABurnRequest(BaseModel):
     user_id: int
     calories: int
