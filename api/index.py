@@ -190,20 +190,21 @@ async def generate_openrouter_content(
     if configured_model:
         # If the user configured a model, put it first, then add backups
         if image_bytes:
-            models_to_try = [configured_model, "google/gemma-4-31b-it:free", "nex-agi/nex-n2-pro:free", "openrouter/free"]
+            models_to_try = [configured_model, "nex-agi/nex-n2-pro:free", "google/gemma-4-31b-it:free", "openrouter/free"]
         else:
-            models_to_try = [configured_model, "google/gemma-4-31b-it:free", "meta-llama/llama-3.3-70b-instruct:free", "meta-llama/llama-3.2-3b-instruct:free", "openrouter/free"]
+            models_to_try = [configured_model, "meta-llama/llama-3.2-3b-instruct:free", "meta-llama/llama-3.3-70b-instruct:free", "google/gemma-4-31b-it:free", "openrouter/free"]
     else:
         if image_bytes:
-            models_to_try = ["google/gemma-4-31b-it:free", "nex-agi/nex-n2-pro:free", "openrouter/free"]
+            models_to_try = ["nex-agi/nex-n2-pro:free", "google/gemma-4-31b-it:free", "openrouter/free"]
         else:
-            models_to_try = ["google/gemma-4-31b-it:free", "meta-llama/llama-3.3-70b-instruct:free", "meta-llama/llama-3.2-3b-instruct:free", "openrouter/free"]
+            models_to_try = ["meta-llama/llama-3.2-3b-instruct:free", "meta-llama/llama-3.3-70b-instruct:free", "google/gemma-4-31b-it:free", "openrouter/free"]
 
     last_err = None
     for model_name in models_to_try:
         payload = {
             "model": model_name,
             "messages": messages,
+            "max_tokens": 500
         }
         if json_mode:
             payload["response_format"] = {"type": "json_object"}
