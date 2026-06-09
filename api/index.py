@@ -14,7 +14,7 @@ from google.genai import types
 # ---------------------------------------------------------
 app = FastAPI(
     title="NutriBot Webhook API",
-    description="Stateless food photo analysis Telegram Bot backend powered by Gemini Flash and Turso in Khmer.",
+    description="Stateless food photo analysis Telegram Bot backend powered by Gemini Flash and Turso.",
     version="1.4.0"
 )
 
@@ -532,8 +532,8 @@ def db_get_day_burn(user_id: int, date_str: str) -> int:
 def db_get_today_burn(user_id: int) -> int:
     """Aggregates all calories burned today (UTC date) for a user."""
     # import datetime (removed local import)
-    now_kh = datetime.datetime.utcnow() + datetime.timedelta(hours=7)
-    return db_get_day_burn(user_id, now_kh.strftime("%Y-%m-%d"))
+    now_ict = datetime.datetime.utcnow() + datetime.timedelta(hours=7)
+    return db_get_day_burn(user_id, now_ict.strftime("%Y-%m-%d"))
 
 def db_get_weekly_stats(user_id: int, start_date_str: str, end_date_str: str) -> tuple[list[tuple[int, str]], list[tuple[int, str]]]:
     """Retrieves all meals and burn logs in the given date range (inclusive, shifted to Cambodia ICT timezone)."""
@@ -637,8 +637,8 @@ def db_get_weekly_nosweet(user_id: int, start_date_str: str, end_date_str: str) 
 def db_get_today_meals(user_id: int) -> tuple[list[dict], int]:
     """Retrieves all meals logged today (UTC date) for a user, returning list and count."""
     # import datetime (removed local import)
-    now_kh = datetime.datetime.utcnow() + datetime.timedelta(hours=7)
-    return db_get_day_meals(user_id, now_kh.strftime("%Y-%m-%d"))
+    now_ict = datetime.datetime.utcnow() + datetime.timedelta(hours=7)
+    return db_get_day_meals(user_id, now_ict.strftime("%Y-%m-%d"))
 
 def db_add_reminder(user_id: int, reminder_time: str):
     """Adds a new reminder for a user. Stored as HH:MM string in ICT (UTC+7)."""
@@ -1106,7 +1106,7 @@ class TelegramBot:
 SYSTEM_PROMPT = (
     "You are a professional nutrition expert. Analyze the food in the provided image and estimate its "
     "nutritional details (calories in Cal, protein/fat/carbs/sugar in grams). "
-    "YOU MUST RESPOND ENTIRELY IN KHMER LANGUAGE. The `food_name` field must be written in beautiful Khmer script "
+    "YOU MUST RESPOND ENTIRELY IN ENGLISH. "
     "(e.g., 'fried rice' or 'noodle soup'). "
     "If the image does not show any food, or you cannot identify any food, "
     "you MUST set the `confidence_score` to less than 0.5 (e.g. 0.0 to 0.4), "
@@ -1116,7 +1116,7 @@ SYSTEM_PROMPT = (
 )
 
 async def handle_telegram_update(payload: dict):
-    """Processes incoming Telegram updates synchronously to fit serverless limits in Khmer."""
+    """Processes incoming Telegram updates synchronously to fit serverless limits."""
     bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
     if not bot_token:
         print("❌ TELEGRAM_BOT_TOKEN is not configured.")
@@ -1378,8 +1378,8 @@ async def handle_telegram_update(payload: dict):
                 loss_pct = (loss / maintain) * 100
                 extreme_pct = (extreme / maintain) * 100
                 
-                gender_kh = "Male" if gender == "male" else "Female"
-                activity_kh = {
+                gender_label = "Male" if gender == "male" else "Female"
+                activity_label = {
                     "sedentary": "Sedentary (Little to no exercise)",
                     "light": "Light (Exercise 1-3 days/week)",
                     "moderate": "Moderate (Exercise 4-5 days/week)",
@@ -1395,11 +1395,11 @@ async def handle_telegram_update(payload: dict):
                     "📊 <b>BMR & TDEE Results</b>\n"
                     "━━━━━━━━━━━━━━━━━━━━\n"
                     "👤 <b>Physical Profile:</b>\n"
-                    f"• Gender: <b>{gender_kh}</b>\n"
+                    f"• Gender: <b>{gender_label}</b>\n"
                     f"• Age: <b>{age} years old</b>\n"
                     f"• Height: <b>{height:.1f} cm</b>\n"
                     f"• Weight: <b>{weight:.1f} kg</b>\n"
-                    f"• Activity Level: <b>{activity_kh}</b>\n"
+                    f"• Activity Level: <b>{activity_label}</b>\n"
                     "━━━━━━━━━━━━━━━━━━━━\n"
                     f"🔥 <b>BMR (Basal Metabolic Rate):</b> <b>{bmr:.0f} Cal</b>\n"
                     f"⚡ <b>TDEE (Maintenance):</b> <b>{maintain:.0f} Cal</b>\n"
@@ -1444,7 +1444,7 @@ async def handle_telegram_update(payload: dict):
                 db_update_tdee_goal(user_id, goal_type, calories)
                 await bot.answer_callback_query(callback_id, "🎯 Goal Saved!")
                 
-                goal_type_kh = {
+                goal_type_label = {
                     "maintain": "Maintain (Maintain Weight)",
                     "mild": "Mild Loss (Mild Weight Loss)",
                     "loss": "Weight Loss (Weight Loss)",
@@ -1455,7 +1455,7 @@ async def handle_telegram_update(payload: dict):
                     "✅ <b>Goal Saved Successfully!</b>\n"
                     "━━━━━━━━━━━━━━━━━━━━\n"
                     "Your new daily calorie goal has been set to:\n"
-                    f"• <b>Goal Type:</b> <b>{goal_type_kh}</b>\n"
+                    f"• <b>Goal Type:</b> <b>{goal_type_label}</b>\n"
                     f"• <b>Daily Calorie Goal:</b> <b>{calories} Cal</b>\n"
                     "━━━━━━━━━━━━━━━━━━━━\n"
                     "🎉 <b>System updated successfully!</b>"
@@ -1469,16 +1469,16 @@ async def handle_telegram_update(payload: dict):
         # 4. Handle Suggest Food preference click callback
         elif callback_data.startswith("suggest_pref:"):
             pref_type = callback_data.split(":")[1]
-            pref_names_kh = {
+            pref_names = {
                 "veg": "High Veg",
                 "meat": "High Meat",
                 "normal": "Standard Balanced"
             }
-            pref_kh = pref_names_kh.get(pref_type, "Standard Balanced")
+            pref_label = pref_names.get(pref_type, "Standard Balanced")
             
             try:
                 # Answer callback immediately to halt spinners
-                await bot.answer_callback_query(callback_id, f"Preparing meal plan: {pref_kh}")
+                await bot.answer_callback_query(callback_id, f"Preparing meal plan: {pref_label}")
                 
                 # Fetch profile and goals
                 profile = db_get_user_profile(user_id)
@@ -1488,7 +1488,7 @@ async def handle_telegram_update(payload: dict):
                 await bot.edit_message(
                     chat_id,
                     message_id,
-                    f"💡 <i>Preparing a daily [{pref_kh}] meal suggestion matching your goal of {goal} Cal... Please wait.</i>",
+                    f"💡 <i>Preparing a daily [{pref_label}] meal suggestion matching your goal of {goal} Cal... Please wait.</i>",
                     reply_markup={"inline_keyboard": []}
                 )
                 
@@ -1587,7 +1587,7 @@ async def handle_telegram_update(payload: dict):
                 suggested_menu = suggested_menu.replace("```html", "").replace("```", "").strip()
                 
                 menu_header = (
-                    f"💡 <b>Daily Meal Suggestions ({pref_kh})</b>\n"
+                    f"💡 <b>Daily Meal Suggestions ({pref_label})</b>\n"
                     "━━━━━━━━━━━━━━━━━━━━\n"
                     f"🎯 <b>Daily Goal:</b> <b>{goal} Cal</b>\n"
                     "━━━━━━━━━━━━━━━━━━━━\n"
@@ -2293,15 +2293,15 @@ async def handle_telegram_update(payload: dict):
                             activity_date = session.get('activity_date')
                             # Cambodia today
                             # import datetime (removed local import)
-                            now_kh = datetime.datetime.utcnow() + datetime.timedelta(hours=7)
-                            today_str = now_kh.strftime("%Y-%m-%d")
+                            now_ict = datetime.datetime.utcnow() + datetime.timedelta(hours=7)
+                            today_str = now_ict.strftime("%Y-%m-%d")
                             
                             if activity_date and activity_date != today_str:
                                 # Format display date
                                 date_parts = activity_date.split('-')
                                 formatted_display_date = f"{date_parts[2]}-{date_parts[1]}-{date_parts[0]}"
                                 display_day = f"on {formatted_display_date}"
-                                yesterday_str = (now_kh - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
+                                yesterday_str = (now_ict - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
                                 if activity_date == yesterday_str:
                                     display_day = "Yesterday"
                                 
@@ -2390,7 +2390,7 @@ async def handle_telegram_update(payload: dict):
                 db_add_burn(user_id, calories, 'Manual', 'Manual', custom_date)
                 if custom_date:
                     # import datetime (removed local import)
-                    now_kh = datetime.datetime.utcnow() + datetime.timedelta(hours=7)
+                    now_ict = datetime.datetime.utcnow() + datetime.timedelta(hours=7)
                     date_parts = custom_date.split('-')
                     formatted_display_date = f"{date_parts[2]}-{date_parts[1]}-{date_parts[0]}"
                     display_day = f"on {formatted_display_date}"
@@ -2582,7 +2582,7 @@ async def handle_telegram_update(payload: dict):
                     db_save_user_profile(user_id, gender, age, height, weight_val, activity)
                     db_update_tdee_goal(user_id, goal_type, int(new_goal))
                     
-                    goal_type_kh = {
+                    goal_type_label = {
                         "maintain": "Maintain (Maintain Weight)",
                         "mild": "Mild Loss (Mild Weight Loss)",
                         "loss": "Weight Loss (Weight Loss)",
@@ -2602,7 +2602,7 @@ async def handle_telegram_update(payload: dict):
                         f"{weight_change_str}\n\n"
                         "🔄 <b>Automatic Recalculation:</b>\n"
                         f"• New TDEE: <b>{maintain:.0f} Cal</b>\n"
-                        f"• Goal Type: <b>{goal_type_kh}</b>\n"
+                        f"• Goal Type: <b>{goal_type_label}</b>\n"
                         f"• Daily Calorie Goal: <b>{new_goal:.0f} Cal</b>\n"
                         "━━━━━━━━━━━━━━━━━━━━\n"
                         "🎉 Your new daily calorie goal has been applied!"
@@ -2825,15 +2825,15 @@ async def handle_telegram_update(payload: dict):
             # Determine period of the day
             hour = now_cambodia.hour
             if 5 <= hour < 11:
-                period_kh = "Morning"
+                period_label = "Morning"
             elif 11 <= hour < 14:
-                period_kh = "Lunch"
+                period_label = "Lunch"
             elif 14 <= hour < 17:
-                period_kh = "Afternoon"
+                period_label = "Afternoon"
             elif 17 <= hour < 22:
-                period_kh = "Evening/Night"
+                period_label = "Evening/Night"
             else:
-                period_kh = "Late Night"
+                period_label = "Late Night"
 
             profile = db_get_user_profile(user_id)
             if profile:
@@ -2845,7 +2845,7 @@ async def handle_telegram_update(payload: dict):
             else:
                 profile_context = "The user is a general individual with a daily budget of 2000 Cal aiming to maintain weight."
 
-            logging_time_context = f"Current Cambodia local time is {time_str} on {day_name} ({period_kh})."
+            logging_time_context = f"Current Cambodia local time is {time_str} on {day_name} ({period_label})."
             if custom_date:
                 logging_time_context = f"The user is retroactively logging for the Cambodia local date {custom_date}."
 
@@ -2876,7 +2876,7 @@ async def handle_telegram_update(payload: dict):
                         model=current_model,
                         contents=[
                             types.Part.from_bytes(data=image_bytes, mime_type=mime_type),
-                            f"Analyze the food in this image and return its nutrition facts in Khmer. Description context from user: {user_food_context}" if user_food_context else "Analyze the food in this image and return its nutrition facts in Khmer."
+                            f"Analyze the food in this image and return its nutrition facts in English. Description context from user: {user_food_context}" if user_food_context else "Analyze the food in this image and return its nutrition facts."
                         ],
                         config=types.GenerateContentConfig(
                             system_instruction=photo_system_prompt,
@@ -2958,7 +2958,7 @@ async def handle_telegram_update(payload: dict):
                 "💾 <b>Successfully logged! If you want to delete this log, click the button below:</b>"
             )
 
-            # Define inline button to clear the meal log dynamically in Khmer
+            # Define inline button to clear the meal log dynamically
             inline_reply_markup = {
                 "inline_keyboard": [
                     [
@@ -3155,10 +3155,10 @@ async def fetch_latest_strava_activity(user_id: int) -> dict:
     import time
     
     # Fetch last 7 days of activities in Cambodia time (ICT - UTC+7)
-    now_kh = datetime.datetime.utcnow() + datetime.timedelta(hours=7)
-    start_of_today_kh = datetime.datetime(now_kh.year, now_kh.month, now_kh.day, 0, 0, 0)
-    start_of_7days_ago_kh = start_of_today_kh - datetime.timedelta(days=7)
-    start_of_7days_ago_utc = start_of_7days_ago_kh - datetime.timedelta(hours=7)
+    now_ict = datetime.datetime.utcnow() + datetime.timedelta(hours=7)
+    start_of_today_ict = datetime.datetime(now_ict.year, now_ict.month, now_ict.day, 0, 0, 0)
+    start_of_7days_ago_ict = start_of_today_ict - datetime.timedelta(days=7)
+    start_of_7days_ago_utc = start_of_7days_ago_ict - datetime.timedelta(hours=7)
     after_timestamp = int(start_of_7days_ago_utc.replace(tzinfo=datetime.timezone.utc).timestamp())
     
     headers = {
@@ -3552,8 +3552,8 @@ async def fetch_latest_fit_session(user_id: int) -> dict:
                 calories_burned = int(display_duration * 6.5)
                 
             end_dt_utc = datetime.datetime.utcfromtimestamp(end_ms / 1000.0)
-            end_dt_kh = end_dt_utc + datetime.timedelta(hours=7)
-            date_str = end_dt_kh.strftime("%d-%m-%Y %I:%M %p")
+            end_dt_ict = end_dt_utc + datetime.timedelta(hours=7)
+            date_str = end_dt_ict.strftime("%d-%m-%Y %I:%M %p")
             
             return {
                 "activity_type": act_type,
@@ -4319,14 +4319,14 @@ async def strava_webhook_event(request: Request):
                         
                         activity_date = session.get('activity_date')
                         # import datetime (removed local import)
-                        now_kh = datetime.datetime.utcnow() + datetime.timedelta(hours=7)
-                        today_str = now_kh.strftime("%Y-%m-%d")
+                        now_ict = datetime.datetime.utcnow() + datetime.timedelta(hours=7)
+                        today_str = now_ict.strftime("%Y-%m-%d")
                         
                         if activity_date and activity_date != today_str:
                             date_parts = activity_date.split('-')
                             formatted_display_date = f"{date_parts[2]}-{date_parts[1]}-{date_parts[0]}"
                             display_day = f"on {formatted_display_date}"
-                            yesterday_str = (now_kh - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
+                            yesterday_str = (now_ict - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
                             if activity_date == yesterday_str:
                                 display_day = "Yesterday"
                                 
@@ -4366,8 +4366,8 @@ async def strava_webhook_event(request: Request):
 async def tma_get_dashboard(user_id: int):
     # Ensure the user is registered (1 transaction, done inline)
     # import datetime (removed local import)
-    now_kh = datetime.datetime.utcnow() + datetime.timedelta(hours=7)
-    date_str = now_kh.strftime("%Y-%m-%d")
+    now_ict = datetime.datetime.utcnow() + datetime.timedelta(hours=7)
+    date_str = now_ict.strftime("%Y-%m-%d")
     
     profile = None
     goal = 2000
@@ -4609,17 +4609,17 @@ async def tma_add_meal_photo(req: TMAMealPhotoRequest):
     
     hour = now_cambodia.hour
     if 5 <= hour < 11:
-        period_kh = "Morning"
+        period_label = "Morning"
     elif 11 <= hour < 14:
-        period_kh = "Lunch"
+        period_label = "Lunch"
     elif 14 <= hour < 17:
-        period_kh = "Afternoon"
+        period_label = "Afternoon"
     elif 17 <= hour < 22:
-        period_kh = "Evening/Night"
+        period_label = "Evening/Night"
     else:
-        period_kh = "Late Night"
+        period_label = "Late Night"
 
-    logging_time_context = f"Current Cambodia local time is {time_str} on {day_name} ({period_kh})."
+    logging_time_context = f"Current Cambodia local time is {time_str} on {day_name} ({period_label})."
     if req.custom_date:
         logging_time_context = f"The user is retroactively logging for the Cambodia local date {req.custom_date}."
 
@@ -4648,7 +4648,7 @@ async def tma_add_meal_photo(req: TMAMealPhotoRequest):
                 model=current_model,
                 contents=[
                     types.Part.from_bytes(data=image_bytes, mime_type=mime_type),
-                    "Analyze the food in this image and return its nutrition facts in Khmer."
+                    "Analyze the food in this image and return its nutrition facts."
                 ],
                 config=types.GenerateContentConfig(
                     system_instruction=photo_system_prompt,
@@ -4862,7 +4862,7 @@ async def tma_get_weekly(user_id: int, start_date: Optional[str] = None, end_dat
     goal = db_get_user_goal(user_id)
     
     days_data = []
-    day_names_kh = {
+    day_names = {
         0: "Mon",
         1: "Tue",
         2: "Wed",
@@ -4886,7 +4886,7 @@ async def tma_get_weekly(user_id: int, start_date: Optional[str] = None, end_dat
         days_data.append({
             "date": d.strftime("%Y-%m-%d"),
             "day_name_en": day_names_en.get(wd),
-            "day_name_kh": day_names_kh.get(wd),
+            "day_name": day_names.get(wd),
             "eaten": 0,
             "burned": 0,
             "no_sweet": False,
@@ -5080,7 +5080,7 @@ async def tma_search_food(user_id: int, query: str):
 async def root_index():
     """Simple aesthetic landing page confirming serverless function status."""
     return {
-        "message": "NutriBot Telegram Webhook FastAPI Khmer Backend is online!",
+        "message": "NutriBot Telegram Webhook FastAPI Backend is online!",
         "endpoints": {
             "webhook": "/api/webhook (POST only)",
             "setup": "/api/setup (GET to bind webhook)",
