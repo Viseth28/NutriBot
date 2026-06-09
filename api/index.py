@@ -210,7 +210,8 @@ async def generate_openrouter_content(
             payload["response_format"] = {"type": "json_object"}
 
         try:
-            async with httpx.AsyncClient(timeout=60.0) as client:
+            timeout_val = 6.0 if image_bytes else 3.5
+            async with httpx.AsyncClient(timeout=timeout_val) as client:
                 resp = await client.post(url, headers=headers, json=payload)
                 resp.raise_for_status()
                 res_json = resp.json()
