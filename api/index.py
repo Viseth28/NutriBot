@@ -186,21 +186,26 @@ async def generate_openrouter_content(
         {"role": "user", "content": user_content}
     ]
 
-    # Construct the fallback list of models
-    if configured_model:
-        # If the user configured a model, put it first, then add backups
-        if image_bytes:
-            models_to_try = [configured_model, "nex-agi/nex-n2-pro:free", "google/gemma-4-31b-it:free", "openrouter/free"]
-        else:
-            models_to_try = [configured_model, "meta-llama/llama-3.2-3b-instruct:free", "meta-llama/llama-3.3-70b-instruct:free", "google/gemma-4-31b-it:free", "openrouter/free"]
+    # Construct the fallback list of models with their respective timeouts
+    if image_bytes:
+        # Vision models fallback (Nex N2 Pro, then Gemma 4 31B)
+        models_with_timeouts = [
+            ("nex-agi/nex-n2-pro:free", 5.5),
+            ("google/gemma-4-31b-it:free", 3.5)
+        ]
     else:
-        if image_bytes:
-            models_to_try = ["nex-agi/nex-n2-pro:free", "google/gemma-4-31b-it:free", "openrouter/free"]
-        else:
-            models_to_try = ["meta-llama/llama-3.2-3b-instruct:free", "meta-llama/llama-3.3-70b-instruct:free", "google/gemma-4-31b-it:free", "openrouter/free"]
+        # Text-only models fallback (Llama 3.2 3B, then Llama 3.3 70B)
+        models_with_timeouts = [
+            ("meta-llama/llama-3.2-3b-instruct:free", 5.0),
+            ("meta-llama/llama-3.3-70b-instruct:free", 4.0)
+        ]
+
+    # Prepend configured model if user specified one
+    if configured_model:
+        models_with_timeouts.insert(0, (configured_model, 5.0))
 
     last_err = None
-    for model_name in models_to_try:
+    for model_name, timeout_val in models_with_timeouts:
         payload = {
             "model": model_name,
             "messages": messages,
@@ -210,7 +215,6 @@ async def generate_openrouter_content(
             payload["response_format"] = {"type": "json_object"}
 
         try:
-            timeout_val = 6.0 if image_bytes else 3.5
             async with httpx.AsyncClient(timeout=timeout_val) as client:
                 resp = await client.post(url, headers=headers, json=payload)
                 resp.raise_for_status()
@@ -1758,7 +1762,7 @@ async def handle_telegram_update(payload: dict):
                 
             except Exception as e:
                 print(f"Error during interactive meal suggestion callback: {e}")
-                err_msg = str(e)
+                err_msg = str(e) or type(e).__name__
                 if any(x in err_msg for x in ["429", "RESOURCE_EXHAUSTED", "LimitExceeded", "quota"]):
                     fail_msg = (
                         "⚠️ <b>Meal Suggestion Failed</b>\n"
@@ -2301,7 +2305,7 @@ async def handle_telegram_update(payload: dict):
                 
             except Exception as e:
                 print(f"Error during text food analysis: {e}")
-                err_msg = str(e)
+                err_msg = str(e) or type(e).__name__
                 if any(x in err_msg for x in ["429", "RESOURCE_EXHAUSTED", "LimitExceeded", "quota"]):
                     fail_msg = (
                         "⚠️ <b>Nutritional Analysis Failed</b>\n"
@@ -3250,7 +3254,7 @@ async def handle_telegram_update(payload: dict):
 
         except Exception as e:
             print(f"Error during food analysis: {e}")
-            err_msg = str(e)
+            err_msg = str(e) or type(e).__name__
             if any(x in err_msg for x in ["429", "RESOURCE_EXHAUSTED", "LimitExceeded", "quota"]):
                 fail_msg = (
                     "⚠️ <b>Nutritional Analysis Failed</b>\n"
