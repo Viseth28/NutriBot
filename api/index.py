@@ -2019,6 +2019,17 @@ async def handle_telegram_update(payload: dict):
             await bot.send_message(chat_id, prompt_text)
             return
 
+        elif text.startswith("/cancel"):
+            db_clear_manual_log_state(user_id)
+            db_clear_tdee_state(user_id)
+            await bot.send_message(
+                chat_id,
+                "❌ <b>បានបោះបង់!</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                "ការកត់ត្រាបច្ចុប្បន្នត្រូវបានលុបចោល និងសម្អាតជោគជ័យ។"
+            )
+            return
+
         elif text.startswith("/goal"):
             parts = text.split()
             if len(parts) < 2:
@@ -5061,29 +5072,6 @@ async def tma_search_food(user_id: int, query: str):
                 "sugar": analysis.sugar,
                 "coaching_recommendation": analysis.coaching_recommendation
             }
-        }
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
-
-@app.get("/api/temp_debug")
-async def temp_debug():
-    try:
-        user_id = 999999999
-        db_clear_manual_log_state(user_id)
-        db_set_manual_log_step(user_id, step="calories", food_name="Test Food")
-        state1 = db_get_manual_log_state(user_id)
-        
-        db_set_manual_log_step(user_id, step="protein", calories=150)
-        state2 = db_get_manual_log_state(user_id)
-        
-        db_clear_manual_log_state(user_id)
-        state3 = db_get_manual_log_state(user_id)
-        
-        return {
-            "ok": True,
-            "state_after_init": state1,
-            "state_after_update": state2,
-            "state_after_clear": state3
         }
     except Exception as e:
         return {"ok": False, "error": str(e)}
