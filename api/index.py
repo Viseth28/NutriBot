@@ -6,8 +6,7 @@ import libsql
 import mimetypes
 from fastapi import FastAPI, Request, BackgroundTasks
 from pydantic import BaseModel, Field
-from google import genai
-from google.genai import types
+import base64
 
 # ---------------------------------------------------------
 # FastAPI App & Global Initialization
@@ -45,6 +44,74 @@ class FoodAnalysis(BaseModel):
     sugar: int = Field(description="Estimated sugar content in grams (g).")
     confidence_score: float = Field(description="Model confidence from 0.0 (not food/unknown) to 1.0 (highly confident food).")
     coaching_recommendation: str = Field(description="A highly personalized, actionable health/coaching recommendation in English tailored specifically to this user's profile and goal (e.g., protein density, health tips, fullness, weight loss suitability).")
+
+class OpenRouterResponse:
+    def __init__(self, text: str):
+        self.text = text
+
+async def generate_openrouter_content(
+    system_prompt: str,
+    user_prompt: str,
+    image_bytes: Optional[bytes] = None,
+    mime_type: Optional[str] = None,
+    json_mode: bool = False
+) -> OpenRouterResponse:
+    """
+    Asynchronously calls OpenRouter API using httpx.
+    """
+    api_key = os.getenv("OPENROUTER_API_KEY")
+    if not api_key:
+        raise ValueError("OPENROUTER_API_KEY environment variable is not configured.")
+
+    model = os.getenv("OPENROUTER_MODEL", "google/gemini-2.5-flash:free")
+    url = "https://openrouter.ai/api/v1/chat/completions"
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://github.com/Viseth28/NutriBot",
+        "X-Title": "NutriBot",
+    }
+
+    if image_bytes:
+        base64_data = base64.b64encode(image_bytes).decode("utf-8")
+        actual_mime = mime_type if mime_type else "image/jpeg"
+        image_data_url = f"data:{actual_mime};base64,{base64_data}"
+        user_content = [
+            {"type": "text", "text": user_prompt},
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": image_data_url
+                }
+            }
+        ]
+    else:
+        user_content = user_prompt
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_content}
+    ]
+
+    payload = {
+        "model": model,
+        "messages": messages,
+    }
+
+    if json_mode:
+        payload["response_format"] = {"type": "json_object"}
+
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        resp = await client.post(url, headers=headers, json=payload)
+        resp.raise_for_status()
+        res_json = resp.json()
+        
+        if "choices" not in res_json or len(res_json["choices"]) == 0:
+            raise ValueError(f"Invalid OpenRouter response: {res_json}")
+            
+        content = res_json["choices"][0]["message"]["content"]
+        return OpenRouterResponse(content)
 
 
 # ---------------------------------------------------------
@@ -1492,17 +1559,9 @@ async def handle_telegram_update(payload: dict):
                     reply_markup={"inline_keyboard": []}
                 )
                 
-                gemini_key = os.getenv("GEMINI_API_KEY")
-                if not gemini_key:
-                    raise ValueError("GEMINI_API_KEY environment variable is not configured.")
-                
-                client = genai.Client()
-                
-                user_model = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
-                models_to_try = [user_model]
-                for fallback in ["gemini-2.0-flash", "gemini-1.5-flash-8b", "gemini-1.5-flash", "gemini-2.0-flash-lite"]:
-                    if fallback not in models_to_try:
-                        models_to_try.append(fallback)
+                openrouter_key = os.getenv("OPENROUTER_API_KEY")
+                if not openrouter_key:
+                    raise ValueError("OPENROUTER_API_KEY environment variable is not configured.")
                 
                 if profile:
                     profile_context = (
@@ -1560,26 +1619,10 @@ async def handle_telegram_update(payload: dict):
                     "• ..."
                 )
                 
-                response = None
-                last_error = None
-                
-                for current_model in models_to_try:
-                    try:
-                        response = client.models.generate_content(
-                            model=current_model,
-                            contents=f"Please generate my 1-day meal plan based on my profile context: {profile_context}",
-                            config=types.GenerateContentConfig(
-                                system_instruction=SUGGEST_SYSTEM_PROMPT,
-                            ),
-                        )
-                        break
-                    except Exception as model_err:
-                        last_error = model_err
-                        print(f"⚠️ Model {current_model} failed or is rate-limited: {model_err}")
-                        continue
-                        
-                if response is None:
-                    raise ValueError(f"All generative models failed. Last error: {last_error}")
+                response = await generate_openrouter_content(
+                    system_prompt=SUGGEST_SYSTEM_PROMPT,
+                    user_prompt=f"Please generate my 1-day meal plan based on my profile context: {profile_context}"
+                )
                     
                 suggested_menu = response.text
                 
@@ -2802,19 +2845,9 @@ async def handle_telegram_update(payload: dict):
 
             image_bytes, mime_type = await bot.get_file_bytes(file_id)
 
-            # Initialize modern Gemini SDK Client (automatically reads GEMINI_API_KEY)
-            gemini_key = os.getenv("GEMINI_API_KEY")
-            if not gemini_key:
-                raise ValueError("GEMINI_API_KEY environment variable is not configured.")
-
-            client = genai.Client()
-            
-            # Setup a robust fallback model chain for rate-limit / resource issues
-            user_model = os.getenv("GEMINI_MODEL", "gemini-2.0-flash") # Default to standard 2.0-flash for free quotas
-            models_to_try = [user_model]
-            for fallback in ["gemini-2.0-flash", "gemini-1.5-flash-8b", "gemini-1.5-flash", "gemini-2.0-flash-lite"]:
-                if fallback not in models_to_try:
-                    models_to_try.append(fallback)
+            openrouter_key = os.getenv("OPENROUTER_API_KEY")
+            if not openrouter_key:
+                raise ValueError("OPENROUTER_API_KEY environment variable is not configured.")
 
             # Get current Cambodia ICT local time for time-aware coaching context
             now_utc = datetime.datetime.utcnow()
@@ -2866,33 +2899,14 @@ async def handle_telegram_update(payload: dict):
                 "there's strong visual context stating otherwise."
             )
 
-            response = None
-            last_error = None
-
-            # Attempt each model in the fallback chain sequentially
-            for current_model in models_to_try:
-                try:
-                    response = client.models.generate_content(
-                        model=current_model,
-                        contents=[
-                            types.Part.from_bytes(data=image_bytes, mime_type=mime_type),
-                            f"Analyze the food in this image and return its nutrition facts in English. Description context from user: {user_food_context}" if user_food_context else "Analyze the food in this image and return its nutrition facts."
-                        ],
-                        config=types.GenerateContentConfig(
-                            system_instruction=photo_system_prompt,
-                            response_mime_type="application/json",
-                            response_schema=FoodAnalysis,
-                        ),
-                    )
-                    break
-                except Exception as model_err:
-                    last_error = model_err
-                    print(f"⚠️ Model {current_model} failed or is rate-limited: {model_err}")
-                    continue
-
-            # If all models failed
-            if response is None:
-                raise ValueError(f"All generative models failed. Last error: {last_error}")
+            user_prompt = f"Analyze the food in this image and return its nutrition facts in English. Description context from user: {user_food_context}" if user_food_context else "Analyze the food in this image and return its nutrition facts."
+            response = await generate_openrouter_content(
+                system_prompt=photo_system_prompt,
+                user_prompt=user_prompt,
+                image_bytes=image_bytes,
+                mime_type=mime_type,
+                json_mode=True
+            )
 
             # Validate output using Pydantic
             analysis = FoodAnalysis.model_validate_json(response.text)
@@ -4478,17 +4492,10 @@ class TMAMealRequest(BaseModel):
 
 @app.post("/api/tma/meal")
 async def tma_add_meal(req: TMAMealRequest):
-    # Process the food description using Gemini and save it to database
-    gemini_key = os.getenv("GEMINI_API_KEY")
-    if not gemini_key:
-        return {"ok": False, "error": "Gemini API key is not configured."}
-        
-    client = genai.Client()
-    user_model = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
-    models_to_try = [user_model]
-    for fallback in ["gemini-2.0-flash", "gemini-1.5-flash-8b", "gemini-1.5-flash", "gemini-2.0-flash-lite"]:
-        if fallback not in models_to_try:
-            models_to_try.append(fallback)
+    # Process the food description using OpenRouter and save it to database
+    openrouter_key = os.getenv("OPENROUTER_API_KEY")
+    if not openrouter_key:
+        return {"ok": False, "error": "OpenRouter API key is not configured."}
     
     profile = db_get_user_profile(req.user_id)
     if profile:
@@ -4519,28 +4526,17 @@ async def tma_add_meal(req: TMAMealRequest):
         "and you can set the `food_name` to 'not food or not found'."
     )
     
-    response = None
-    errors = []
-    for current_model in models_to_try:
-        try:
-            response = client.models.generate_content(
-                model=current_model,
-                contents=f"Analyze the following food description and return its nutrition facts in Khmer: {req.food_description}",
-                config=types.GenerateContentConfig(
-                    system_instruction=TEXT_SYSTEM_PROMPT,
-                    response_mime_type="application/json",
-                    response_schema=FoodAnalysis,
-                ),
-            )
-            break
-        except Exception as model_err:
-            errors.append(f"{current_model}: {str(model_err)}")
-
-    if not response:
-        combined_errors = "; ".join(errors)
-        if any(x in combined_errors for x in ["429", "RESOURCE_EXHAUSTED", "LimitExceeded", "quota"]):
+    try:
+        response = await generate_openrouter_content(
+            system_prompt=TEXT_SYSTEM_PROMPT,
+            user_prompt=f"Analyze the following food description and return its nutrition facts: {req.food_description}",
+            json_mode=True
+        )
+    except Exception as model_err:
+        err_str = str(model_err)
+        if any(x in err_str for x in ["429", "RESOURCE_EXHAUSTED", "LimitExceeded", "quota"]):
             return {"ok": False, "error": "A technical error occurred while analyzing your food description. Please try again later."}
-        return {"ok": False, "error": f"Gemini Error list: {combined_errors}"}
+        return {"ok": False, "error": f"OpenRouter Error: {err_str}"}
         
     try:
         analysis = FoodAnalysis.model_validate_json(response.text)
@@ -4572,10 +4568,10 @@ class TMAMealPhotoRequest(BaseModel):
 
 @app.post("/api/tma/meal_photo")
 async def tma_add_meal_photo(req: TMAMealPhotoRequest):
-    # Process the food image using Gemini and return nutrition details
-    gemini_key = os.getenv("GEMINI_API_KEY")
-    if not gemini_key:
-        return {"ok": False, "error": "Gemini API key is not configured."}
+    # Process the food image using OpenRouter and return nutrition details
+    openrouter_key = os.getenv("OPENROUTER_API_KEY")
+    if not openrouter_key:
+        return {"ok": False, "error": "OpenRouter API key is not configured."}
         
     try:
         header, encoded = req.image_base64.split(",", 1)
@@ -4584,13 +4580,6 @@ async def tma_add_meal_photo(req: TMAMealPhotoRequest):
         image_bytes = base64.b64decode(encoded)
     except Exception as e:
         return {"ok": False, "error": f"Invalid image base64 format: {str(e)}"}
-
-    client = genai.Client()
-    user_model = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
-    models_to_try = [user_model]
-    for fallback in ["gemini-2.0-flash", "gemini-1.5-flash-8b", "gemini-1.5-flash", "gemini-2.0-flash-lite"]:
-        if fallback not in models_to_try:
-            models_to_try.append(fallback)
     
     profile = db_get_user_profile(req.user_id)
     if profile:
@@ -4640,31 +4629,19 @@ async def tma_add_meal_photo(req: TMAMealPhotoRequest):
         "there's strong visual context stating otherwise."
     )
     
-    response = None
-    errors = []
-    for current_model in models_to_try:
-        try:
-            response = client.models.generate_content(
-                model=current_model,
-                contents=[
-                    types.Part.from_bytes(data=image_bytes, mime_type=mime_type),
-                    "Analyze the food in this image and return its nutrition facts."
-                ],
-                config=types.GenerateContentConfig(
-                    system_instruction=photo_system_prompt,
-                    response_mime_type="application/json",
-                    response_schema=FoodAnalysis,
-                ),
-            )
-            break
-        except Exception as model_err:
-            errors.append(f"{current_model}: {str(model_err)}")
-
-    if not response:
-        combined_errors = "; ".join(errors)
-        if any(x in combined_errors for x in ["429", "RESOURCE_EXHAUSTED", "LimitExceeded", "quota"]):
+    try:
+        response = await generate_openrouter_content(
+            system_prompt=photo_system_prompt,
+            user_prompt="Analyze the food in this image and return its nutrition facts.",
+            image_bytes=image_bytes,
+            mime_type=mime_type,
+            json_mode=True
+        )
+    except Exception as model_err:
+        err_str = str(model_err)
+        if any(x in err_str for x in ["429", "RESOURCE_EXHAUSTED", "LimitExceeded", "quota"]):
             return {"ok": False, "error": "A technical error occurred while analyzing your image. Please try again later."}
-        return {"ok": False, "error": f"Gemini Error list: {combined_errors}"}
+        return {"ok": False, "error": f"OpenRouter Error: {err_str}"}
         
     try:
         analysis = FoodAnalysis.model_validate_json(response.text)
@@ -5012,16 +4989,9 @@ async def tma_add_custom_meal(req: TMACustomMealRequest):
 
 @app.get("/api/tma/search_food")
 async def tma_search_food(user_id: int, query: str):
-    gemini_key = os.getenv("GEMINI_API_KEY")
-    if not gemini_key:
-        return {"ok": False, "error": "Gemini API key is not configured."}
-        
-    client = genai.Client()
-    user_model = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
-    models_to_try = [user_model]
-    for fallback in ["gemini-2.0-flash", "gemini-1.5-flash-8b", "gemini-1.5-flash", "gemini-2.0-flash-lite"]:
-        if fallback not in models_to_try:
-            models_to_try.append(fallback)
+    openrouter_key = os.getenv("OPENROUTER_API_KEY")
+    if not openrouter_key:
+        return {"ok": False, "error": "OpenRouter API key is not configured."}
     
     TEXT_SYSTEM_PROMPT = (
         "You are a professional nutrition expert and calorie dictionary. Estimate the average nutritional facts "
@@ -5033,28 +5003,17 @@ async def tma_search_food(user_id: int, query: str):
         "If the query is not a food item or you cannot find it, set `confidence_score` below 0.5."
     )
     
-    response = None
-    errors = []
-    for current_model in models_to_try:
-        try:
-            response = client.models.generate_content(
-                model=current_model,
-                contents=f"Search nutrition details for food: {query}",
-                config=types.GenerateContentConfig(
-                    system_instruction=TEXT_SYSTEM_PROMPT,
-                    response_mime_type="application/json",
-                    response_schema=FoodAnalysis,
-                ),
-            )
-            break
-        except Exception as e:
-            errors.append(f"{current_model}: {str(e)}")
-
-    if not response:
-        combined_errors = "; ".join(errors)
-        if any(x in combined_errors for x in ["429", "RESOURCE_EXHAUSTED", "LimitExceeded", "quota"]):
+    try:
+        response = await generate_openrouter_content(
+            system_prompt=TEXT_SYSTEM_PROMPT,
+            user_prompt=f"Search nutrition details for food: {query}",
+            json_mode=True
+        )
+    except Exception as model_err:
+        err_str = str(model_err)
+        if any(x in err_str for x in ["429", "RESOURCE_EXHAUSTED", "LimitExceeded", "quota"]):
             return {"ok": False, "error": "A technical error occurred while analyzing your food description. Please try again later."}
-        return {"ok": False, "error": f"Gemini Error list: {combined_errors}"}
+        return {"ok": False, "error": f"OpenRouter Error: {err_str}"}
 
     try:
         analysis = FoodAnalysis.model_validate_json(response.text)
