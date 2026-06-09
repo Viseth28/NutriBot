@@ -2053,21 +2053,164 @@ async def handle_telegram_update(payload: dict):
             # Clear any active manual log state for the user
             db_clear_manual_log_state(user_id)
             
-            # Initialize manual log state
-            db_set_manual_log_step(
-                user_id,
-                step="calories",
-                food_name=food_description,
-                custom_date=custom_date
-            )
+            # Send immediate progress update message
+            ack = await bot.send_message(chat_id, "🔍 <b>Analyzing your food description...</b>")
+            ack_message_id = ack.get("message_id") if ack else None
+
+            # Get Cambodia local time for context
+            now_cambodia = datetime.datetime.utcnow() + datetime.timedelta(hours=7)
+            time_str = now_cambodia.strftime("%H:%M")
+            day_name = now_cambodia.strftime("%A")
+            hour = now_cambodia.hour
             
-            prompt_text = (
-                f"📝 <b>Log Food: {food_description}</b> ({display_date})\n"
-                f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"🔥 Please enter the amount of <b>Calories (Calories/Cal)</b>:\n\n"
-                f"<i>(Please enter a number or send /cancel to abort)</i>"
+            if 5 <= hour < 11:
+                period_label = "Morning"
+            elif 11 <= hour < 14:
+                period_label = "Lunch"
+            elif 14 <= hour < 17:
+                period_label = "Afternoon"
+            elif 17 <= hour < 22:
+                period_label = "Evening/Night"
+            else:
+                period_label = "Late Night"
+
+            # Get user health profile context
+            profile = db_get_user_profile(user_id)
+            if profile:
+                profile_context = (
+                    f"The user is a {profile['gender']}, {profile['age']} years old, {profile['height']:.1f} cm tall, "
+                    f"weighing {profile['weight']:.1f} kg. Their physical activity level is mapped as '{profile['activity']}'. "
+                    f"Their daily budget goal is {profile['daily_calorie_budget']} Cal and their goal type is '{profile['goal_type']}'."
+                )
+            else:
+                profile_context = "The user is a general individual with a daily budget of 2000 Cal aiming to maintain weight."
+
+            logging_time_context = f"Current Cambodia local time is {time_str} on {day_name} ({period_label})."
+            if custom_date:
+                logging_time_context = f"The user is retroactively logging for the Cambodia local date {custom_date}."
+
+            TEXT_SYSTEM_PROMPT = (
+                "You are a professional nutrition expert and health coach. Analyze the food description text provided and estimate its "
+                "nutritional details (calories in Cal, protein/fat/carbs/sugar in grams).\n"
+                f"User Health Context: {profile_context}\n"
+                f"Logging Context: {logging_time_context}\n"
+                "YOU MUST RESPOND ENTIRELY IN ENGLISH.\n"
+                "Provide a highly personalized coaching and health recommendation (in the `coaching_recommendation` field) "
+                "in English tailored specifically to this user's profile, goal, and the logging context.\n"
+                "CRITICAL SECRECY RULE: You know the user's age, weight, height, and calorie target budget from the User Health Context, BUT YOU MUST KEEP THEM SECRET. Never mention or repeat their age, weight, height, or daily calorie goal in your coaching_recommendation text response. Focus purely on qualitative health insights, digestion, macronutrients, and advice.\n"
+                "Do NOT recite or repeat raw numbers (like '150 Cal' or '10g protein') inside the coaching recommendation text.\n"
+                "If the text does not describe any food, or you cannot identify any food, "
+                "you MUST set the `confidence_score` to less than 0.5 (e.g. 0.0 to 0.4), "
+                "and you can set the `food_name` to 'not food or not found'."
             )
-            await bot.send_message(chat_id, prompt_text)
+
+            try:
+                response = await generate_openrouter_content(
+                    system_prompt=TEXT_SYSTEM_PROMPT,
+                    user_prompt=f"Analyze the following food description and return its nutrition facts: {food_description}",
+                    json_mode=True
+                )
+                
+                # Validate output using Pydantic
+                analysis = FoodAnalysis.model_validate_json(response.text)
+                
+                # Check for non-food or low confidence edge cases
+                if analysis.confidence_score < 0.5:
+                    err_msg = (
+                        "🍳 <b>Oops! No Food Detected!</b>\n"
+                        "━━━━━━━━━━━━━━━━━━━━\n"
+                        "I'm not sure this describes a food item. Make sure the text describes food clearly and send again!\n\n"
+                        f"<b>(Detected: {analysis.food_name} | Confidence: {analysis.confidence_score * 100:.0f}%)</b>"
+                    )
+                    if ack_message_id:
+                        await bot.edit_message(chat_id, ack_message_id, err_msg)
+                    else:
+                        await bot.send_message(chat_id, err_msg)
+                    return
+                
+                # Save meal details to database and get primary key ID
+                inserted_meal_id = db_add_meal(user_id, analysis, custom_date)
+                await sync_meal_to_google_fit(user_id, analysis)
+                
+                # Fetch remaining calories
+                if custom_date:
+                    today_meals, total_cals = db_get_day_meals(user_id, custom_date)
+                    total_burn = db_get_day_burn(user_id, custom_date)
+                else:
+                    today_meals, total_cals = db_get_today_meals(user_id)
+                    total_burn = db_get_today_burn(user_id)
+                    
+                goal = db_get_user_goal(user_id)
+                remaining = goal - total_cals
+                balance_emoji = "⚖️" if remaining >= 0 else "🚨"
+                remaining_str = f"remaining <b>{remaining} Cal</b>" if remaining >= 0 else f"over <b>{-remaining} Cal</b>"
+                
+                # Format custom display date
+                if custom_date:
+                    date_parts = custom_date.split('-')
+                    formatted_display_date = f"{date_parts[2]}-{date_parts[1]}-{date_parts[0]}"
+                else:
+                    formatted_display_date = now_cambodia.strftime('%d-%m-%Y')
+
+                # Format the output beautifully using HTML tags
+                result_card = (
+                    "🍳 <b>Nutritional Analysis Results</b>\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n"
+                    f"🥗 <b>Food:</b> <b>{analysis.food_name}</b>\n"
+                    f"📊 <b>Confidence:</b> <b>{analysis.confidence_score * 100:.0f}%</b>\n"
+                    f"📅 <b>Date:</b> <b>{formatted_display_date}</b>\n\n"
+                    f"🔥 <b>Energy:</b> <b>{analysis.calories} Cal</b>\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n"
+                    f"🥩 <b>Protein:</b> <b>{analysis.protein}g</b>\n"
+                    f"🧈 <b>Total Fat:</b> <b>{analysis.fat}g</b>\n"
+                    f"🍞 <b>Carbohydrates:</b> <b>{analysis.carbs}g</b>\n"
+                    f"🍬 <b>Of which Sugars:</b> <b>{analysis.sugar}g</b>\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n"
+                    f"🏃 <b>Burned:</b> <b>{total_burn} Cal</b>\n"
+                    f"{balance_emoji} <b>Calories ({display_date}):</b> <b>{total_cals}</b> / <b>{goal} Cal</b> ({remaining_str})\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n"
+                    f"💡 <b>Coaching Advice:</b>\n"
+                    f"« {analysis.coaching_recommendation} »\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n"
+                    "💾 <b>Successfully logged! If you want to delete this log, click the button below:</b>"
+                )
+                
+                inline_reply_markup = {
+                    "inline_keyboard": [
+                        [
+                            {
+                                "text": "❌ Delete this log",
+                                "callback_data": f"delete_meal:{inserted_meal_id}"
+                            }
+                        ]
+                    ]
+                }
+                
+                if ack_message_id:
+                    await bot.edit_message(chat_id, ack_message_id, result_card, reply_markup=inline_reply_markup)
+                else:
+                    await bot.send_message(chat_id, result_card, reply_markup=inline_reply_markup)
+                
+            except Exception as e:
+                print(f"Error during text food analysis: {e}")
+                err_msg = str(e)
+                if any(x in err_msg for x in ["429", "RESOURCE_EXHAUSTED", "LimitExceeded", "quota"]):
+                    fail_msg = (
+                        "⚠️ <b>Nutritional Analysis Failed</b>\n"
+                        "━━━━━━━━━━━━━━━━━━━━\n"
+                        "A technical error occurred while analyzing your food description. Please try again later."
+                    )
+                else:
+                    fail_msg = (
+                        "⚠️ <b>Nutritional Analysis Failed</b>\n"
+                        "━━━━━━━━━━━━━━━━━━━━\n"
+                        "A technical error occurred while analyzing your food description. Make sure Turso and OpenRouter credentials are set up on Vercel.\n\n"
+                        f"<b>Details:</b> <code>{err_msg}</code>"
+                    )
+                if ack_message_id:
+                    await bot.edit_message(chat_id, ack_message_id, fail_msg)
+                else:
+                    await bot.send_message(chat_id, fail_msg)
             return
 
         elif text.startswith("/cancel"):
