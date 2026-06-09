@@ -5068,20 +5068,23 @@ async def tma_search_food(user_id: int, query: str):
 @app.get("/api/temp_debug")
 async def temp_debug():
     try:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
-            tables = [r[0] for r in cursor.fetchall()]
-            
-            cursor.execute("SELECT * FROM manual_log_states")
-            rows = cursor.fetchall()
-            
-            return {
-                "ok": True,
-                "tables": tables,
-                "manual_log_states_count": len(rows),
-                "manual_log_states": rows
-            }
+        user_id = 999999999
+        db_clear_manual_log_state(user_id)
+        db_set_manual_log_step(user_id, step="calories", food_name="Test Food")
+        state1 = db_get_manual_log_state(user_id)
+        
+        db_set_manual_log_step(user_id, step="protein", calories=150)
+        state2 = db_get_manual_log_state(user_id)
+        
+        db_clear_manual_log_state(user_id)
+        state3 = db_get_manual_log_state(user_id)
+        
+        return {
+            "ok": True,
+            "state_after_init": state1,
+            "state_after_update": state2,
+            "state_after_clear": state3
+        }
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
