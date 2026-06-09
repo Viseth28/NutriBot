@@ -5065,6 +5065,26 @@ async def tma_search_food(user_id: int, query: str):
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
+@app.get("/api/temp_debug")
+async def temp_debug():
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            tables = [r[0] for r in cursor.fetchall()]
+            
+            cursor.execute("SELECT * FROM manual_log_states")
+            rows = cursor.fetchall()
+            
+            return {
+                "ok": True,
+                "tables": tables,
+                "manual_log_states_count": len(rows),
+                "manual_log_states": rows
+            }
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
 @app.get("/")
 async def root_index():
     """Simple aesthetic landing page confirming serverless function status."""
