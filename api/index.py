@@ -13,7 +13,7 @@ import base64
 # ---------------------------------------------------------
 app = FastAPI(
     title="NutriBot Webhook API",
-    description="Stateless food photo analysis Telegram Bot backend powered by Gemini Flash and Turso.",
+    description="Stateless food photo analysis Telegram Bot backend powered by OpenRouter and Turso.",
     version="1.4.0"
 )
 
@@ -33,7 +33,7 @@ app.mount("/miniapp", StaticFiles(directory=miniapp_dir, html=True), name="minia
 
 
 # ---------------------------------------------------------
-# Pydantic Schemas for Gemini Structured Output
+# Pydantic Schemas for OpenRouter Structured Output
 # ---------------------------------------------------------
 class FoodAnalysis(BaseModel):
     food_name: str = Field(description="The primary name or description of the identified food dish in English.")
@@ -47,7 +47,15 @@ class FoodAnalysis(BaseModel):
 
 class OpenRouterResponse:
     def __init__(self, text: str):
-        self.text = text
+        # Clean markdown code blocks if the model wrapped the JSON in them
+        cleaned_text = text.strip()
+        if cleaned_text.startswith("```json"):
+            cleaned_text = cleaned_text[7:]
+        elif cleaned_text.startswith("```"):
+            cleaned_text = cleaned_text[3:]
+        if cleaned_text.endswith("```"):
+            cleaned_text = cleaned_text[:-3]
+        self.text = cleaned_text.strip()
 
 async def generate_openrouter_content(
     system_prompt: str,
@@ -63,7 +71,7 @@ async def generate_openrouter_content(
     if not api_key:
         raise ValueError("OPENROUTER_API_KEY environment variable is not configured.")
 
-    model = os.getenv("OPENROUTER_MODEL", "openrouter/free")
+    model = os.getenv("OPENROUTER_MODEL", "google/gemma-4-31b-it:free")
     url = "https://openrouter.ai/api/v1/chat/completions"
 
     headers = {
@@ -3002,7 +3010,7 @@ async def handle_telegram_update(payload: dict):
                 fail_msg = (
                     "⚠️ <b>Nutritional Analysis Failed</b>\n"
                     "━━━━━━━━━━━━━━━━━━━━\n"
-                    "A technical error occurred while analyzing your image. Make sure Turso and Gemini credentials are set up on Vercel.\n\n"
+                    "A technical error occurred while analyzing your image. Make sure Turso and OpenRouter credentials are set up on Vercel.\n\n"
                     f"<b>Details:</b> <code>{err_msg}</code>"
                 )
             if ack_message_id:
@@ -4111,10 +4119,10 @@ async def health_check():
         results["checks"]["turso"] = f"failed: {e}"
         results["status"] = "unhealthy"
         
-    # 2. Check Gemini Key
-    gemini_key = os.getenv("GEMINI_API_KEY")
-    results["checks"]["gemini"] = "present" if gemini_key else "missing"
-    if not gemini_key:
+    # 2. Check OpenRouter Key
+    openrouter_key = os.getenv("OPENROUTER_API_KEY")
+    results["checks"]["openrouter"] = "present" if openrouter_key else "missing"
+    if not openrouter_key:
         results["status"] = "unhealthy"
         
     # 3. Check Telegram Token
