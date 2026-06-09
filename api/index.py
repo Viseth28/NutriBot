@@ -107,6 +107,20 @@ def db_initialize_schema():
             );
             """)
             cursor.execute("""
+            CREATE TABLE IF NOT EXISTS manual_log_states (
+                user_id INTEGER PRIMARY KEY,
+                step TEXT,
+                food_name TEXT,
+                calories INTEGER,
+                protein INTEGER,
+                carbs INTEGER,
+                fat INTEGER,
+                sugar INTEGER,
+                custom_date TEXT,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+            """)
+            cursor.execute("""
             CREATE TABLE IF NOT EXISTS burn_logs (
                 burn_id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER,
@@ -689,6 +703,213 @@ def db_get_active_reminders_for_slot(slot_pattern: str) -> list[int]:
         print(f"Error getting active reminders for slot {slot_pattern}: {e}")
     return user_ids
 
+def db_get_manual_log_state(user_id: int) -> dict:
+    """Retrieves the manual meal log state for a user, or None if not found."""
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT step, food_name, calories, protein, carbs, fat, sugar, custom_date FROM manual_log_states WHERE user_id = ?",
+                (user_id,)
+            )
+            row = cursor.fetchone()
+            if row:
+                return {
+                    "step": row[0],
+                    "food_name": row[1],
+                    "calories": row[2],
+                    "protein": row[3],
+                    "carbs": row[4],
+                    "fat": row[5],
+                    "sugar": row[6],
+                    "custom_date": row[7]
+                }
+    except Exception as e:
+        print(f"Error getting manual log state for user {user_id}: {e}")
+    return None
+
+def db_set_manual_log_step(
+    user_id: int,
+    step: str,
+    food_name: str = None,
+    calories: int = None,
+    protein: int = None,
+    carbs: int = None,
+    fat: int = None,
+    sugar: int = None,
+    custom_date: str = None
+):
+    """Updates or inserts a manual log state step for a user."""
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("INSERT OR IGNORE INTO manual_log_states (user_id, step) VALUES (?, ?)", (user_id, step))
+            
+            updates = ["step = ?"]
+            params = [step]
+            
+            if food_name is not None:
+                updates.append("food_name = ?")
+                params.append(food_name)
+            if calories is not None:
+                updates.append("calories = ?")
+                params.append(calories)
+            if protein is not None:
+                updates.append("protein = ?")
+                params.append(protein)
+            if carbs is not None:
+                updates.append("carbs = ?")
+                params.append(carbs)
+            if fat is not None:
+                updates.append("fat = ?")
+                params.append(fat)
+            if sugar is not None:
+                updates.append("sugar = ?")
+                params.append(sugar)
+            if custom_date is not None:
+                updates.append("custom_date = ?")
+                params.append(custom_date)
+                
+            params.append(user_id)
+            query = f"UPDATE manual_log_states SET {', '.join(updates)}, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?"
+            cursor.execute(query, tuple(params))
+            conn.commit()
+    except Exception as e:
+        print(f"Error setting manual log step for user {user_id}: {e}")
+
+def db_clear_manual_log_state(user_id: int):
+    """Deletes manual log state for a user."""
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM manual_log_states WHERE user_id = ?", (user_id,))
+            conn.commit()
+    except Exception as e:
+        print(f"Error clearing manual log state for user {user_id}: {e}")
+
+def get_macro_keyboard():
+    return {
+        "inline_keyboard": [
+            [
+                {"text": "0g", "callback_data": "manual_log_macro:0"},
+                {"text": "5g", "callback_data": "manual_log_macro:5"},
+                {"text": "10g", "callback_data": "manual_log_macro:10"},
+                {"text": "20g", "callback_data": "manual_log_macro:20"}
+            ],
+            [
+                {"text": "រំលង (Skip)", "callback_data": "manual_log_macro:skip"}
+            ]
+        ]
+    }
+
+async def complete_manual_log(bot, user_id: int, chat_id: int, sugar_val: int, message_id_to_edit: int = None):
+    state = db_get_manual_log_state(user_id)
+    if not state:
+        await bot.send_message(chat_id, "⚠️ រកមិនឃើញទិន្នន័យចាស់! សូមចាប់ផ្តើមម្តងទៀត។")
+        return
+        
+    food_name = state["food_name"]
+    calories = state["calories"]
+    protein = state["protein"]
+    carbs = state["carbs"]
+    fat = state["fat"]
+    custom_date = state["custom_date"]
+    
+    analysis = FoodAnalysis(
+        food_name=food_name,
+        calories=calories,
+        protein=protein,
+        carbs=carbs,
+        fat=fat,
+        sugar=sugar_val,
+        confidence_score=1.0,
+        coaching_recommendation="កំណត់ត្រាដោយផ្ទាល់"
+    )
+    
+    # Save to database
+    inserted_meal_id = db_add_meal(user_id, analysis, custom_date)
+    
+    # Sync to Google Fit
+    try:
+        await sync_meal_to_google_fit(user_id, analysis)
+    except Exception as gfit_err:
+        print(f"Error syncing manual log to Google Fit: {gfit_err}")
+        
+    # Clear manual log state
+    db_clear_manual_log_state(user_id)
+    
+    # Get current time and format response
+    import datetime
+    now_cambodia = datetime.datetime.utcnow() + datetime.timedelta(hours=7)
+    
+    today_str = now_cambodia.strftime("%Y-%m-%d")
+    yesterday_str = (now_cambodia - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
+    day_before_yesterday_str = (now_cambodia - datetime.timedelta(days=2)).strftime("%Y-%m-%d")
+    
+    if custom_date == today_str:
+        display_date_lbl = "ថ្ងៃនេះ"
+    elif custom_date == yesterday_str:
+        display_date_lbl = "ម្សិលមិញ"
+    elif custom_date == day_before_yesterday_str:
+        display_date_lbl = "ម្សិលម្ងៃ"
+    elif custom_date:
+        date_parts = custom_date.split('-')
+        display_date_lbl = f"{date_parts[2]}-{date_parts[1]}-{date_parts[0]}"
+    else:
+        display_date_lbl = "ថ្ងៃនេះ"
+        
+    if custom_date:
+        today_meals, total_cals = db_get_day_meals(user_id, custom_date)
+        total_burn = db_get_day_burn(user_id, custom_date)
+        date_parts = custom_date.split('-')
+        formatted_display_date = f"{date_parts[2]}-{date_parts[1]}-{date_parts[0]}"
+    else:
+        today_meals, total_cals = db_get_today_meals(user_id)
+        total_burn = db_get_today_burn(user_id)
+        formatted_display_date = now_cambodia.strftime('%d-%m-%Y')
+        
+    goal = db_get_user_goal(user_id)
+    remaining = goal - total_cals
+    balance_emoji = "⚖️" if remaining >= 0 else "🚨"
+    remaining_str = f"សល់ <b>{remaining} Cal</b>" if remaining >= 0 else f"លើស <b>{-remaining} Cal</b>"
+    
+    result_card = (
+        "🍳 <b>លទ្ធផលកត់ត្រាអាហារ (Manual Log)</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        f"🥗 <b>អាហារ៖</b> <b>{food_name}</b>\n"
+        f"📅 <b>កាលបរិច្ឆេទ៖</b> <b>{formatted_display_date}</b>\n\n"
+        f"🔥 <b>ថាមពល៖</b> <b>{calories} Cal</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        f"🥩 <b>ប្រូតេអ៊ីន៖</b> <b>{protein}g</b>\n"
+        f"🧈 <b>ខ្លាញ់សរុប៖</b> <b>{fat}g</b>\n"
+        f"🍞 <b>កាបូអ៊ីដ្រាត៖</b> <b>{carbs}g</b>\n"
+        f"🍬 <b>ក្នុងនោះជាតិស្ករ៖</b> <b>{sugar_val}g</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        f"🏃 <b>បានដុតរំលាយ៖</b> <b>{total_burn} Cal</b>\n"
+        f"{balance_emoji} <b>កាឡូរី ({display_date_lbl})៖</b> <b>{total_cals}</b> / <b>{goal} Cal</b> ({remaining_str})\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "💡 <b>ការណែនាំ៖</b>\n"
+        "« កំណត់ត្រាដោយផ្ទាល់ »\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "💾 <b>បានកត់ត្រាចូលគណនីរួចរាល់! ប្រសិនបើចង់លុបកំណត់ត្រានេះវិញ សូមចុចប៊ូតុងខាងក្រោម៖</b>"
+    )
+    
+    inline_reply_markup = {
+        "inline_keyboard": [
+            [
+                {
+                    "text": "❌ លុបកំណត់ត្រានេះ",
+                    "callback_data": f"delete_meal:{inserted_meal_id}"
+                }
+            ]
+        ]
+    }
+    
+    if message_id_to_edit:
+        await bot.edit_message(chat_id, message_id_to_edit, result_card, reply_markup=inline_reply_markup)
+    else:
+        await bot.send_message(chat_id, result_card, reply_markup=inline_reply_markup)
+
 def db_get_tdee_state(user_id: int) -> dict:
     """Retrieves the TDEE state for a user, or None if not found."""
     try:
@@ -913,7 +1134,82 @@ async def handle_telegram_update(payload: dict):
         callback_data = callback_query.get("data", "")
         
         # 1. Handle Delete specific meal log
-        if callback_data.startswith("delete_meal:"):
+        if callback_data.startswith("manual_log_macro:"):
+            state = db_get_manual_log_state(user_id)
+            if not state:
+                await bot.answer_callback_query(callback_id, "⚠️ គ្មានកំណត់ត្រាសកម្មទេ! សូមចាប់ផ្តើមម្តងទៀត។", show_alert=True)
+                return
+                
+            val_str = callback_data.split(":")[1]
+            val = 0 if val_str == "skip" else int(val_str)
+            step = state["step"]
+            food_name = state["food_name"]
+            custom_date = state["custom_date"]
+            
+            import datetime
+            now_cambodia = datetime.datetime.utcnow() + datetime.timedelta(hours=7)
+            today_str = now_cambodia.strftime("%Y-%m-%d")
+            yesterday_str = (now_cambodia - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
+            day_before_yesterday_str = (now_cambodia - datetime.timedelta(days=2)).strftime("%Y-%m-%d")
+            
+            if custom_date == today_str:
+                display_date = "ថ្ងៃនេះ"
+            elif custom_date == yesterday_str:
+                display_date = "ម្សិលមិញ"
+            elif custom_date == day_before_yesterday_str:
+                display_date = "ម្សិលម្ងៃ"
+            elif custom_date:
+                date_parts = custom_date.split('-')
+                display_date = f"{date_parts[2]}-{date_parts[1]}-{date_parts[0]}"
+            else:
+                display_date = "ថ្ងៃនេះ"
+                
+            await bot.answer_callback_query(callback_id, "កត់ត្រារួចរាល់!")
+            
+            if step == "protein":
+                db_set_manual_log_step(user_id, step="carbs", protein=val)
+                await bot.edit_message(
+                    chat_id,
+                    message_id,
+                    f"📝 <b>កត់ត្រាអាហារ៖ {food_name}</b> ({display_date})\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"🥩 ប្រូតេអ៊ីន៖ <b>{val}g</b>\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"🍞 សូមវាយបញ្ចូល ឬជ្រើសរើសបរិមាណ <b>កាបូអ៊ីដ្រាត (Carbs)</b> ជាក្រាម (g)៖",
+                    reply_markup=get_macro_keyboard()
+                )
+            elif step == "carbs":
+                db_set_manual_log_step(user_id, step="fat", carbs=val)
+                await bot.edit_message(
+                    chat_id,
+                    message_id,
+                    f"📝 <b>កត់ត្រាអាហារ៖ {food_name}</b> ({display_date})\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"🥩 ប្រូតេអ៊ីន៖ <b>{state['protein']}g</b>\n"
+                    f"🍞 កាបូអ៊ីដ្រាត៖ <b>{val}g</b>\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"🧈 សូមវាយបញ្ចូល ឬជ្រើសរើសបរិមាណ <b>ខ្លាញ់សរុប (Fat)</b> ជាក្រាម (g)៖",
+                    reply_markup=get_macro_keyboard()
+                )
+            elif step == "fat":
+                db_set_manual_log_step(user_id, step="sugar", fat=val)
+                await bot.edit_message(
+                    chat_id,
+                    message_id,
+                    f"📝 <b>កត់ត្រាអាហារ៖ {food_name}</b> ({display_date})\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"🥩 ប្រូតេអ៊ីន៖ <b>{state['protein']}g</b>\n"
+                    f"🍞 កាបូអ៊ីដ្រាត៖ <b>{state['carbs']}g</b>\n"
+                    f"🧈 ខ្លាញ់៖ <b>{val}g</b>\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"🍬 សូមវាយបញ្ចូល ឬជ្រើសរើសបរិមាណ <b>ជាតិស្ករ (Sugar)</b> ជាក្រាម (g)៖",
+                    reply_markup=get_macro_keyboard()
+                )
+            elif step == "sugar":
+                await complete_manual_log(bot, user_id, chat_id, sugar_val=val, message_id_to_edit=message_id)
+            return
+
+        elif callback_data.startswith("delete_meal:"):
             meal_id = int(callback_data.split(":")[1])
             try:
                 db_delete_meal(user_id, meal_id)
@@ -1371,6 +1667,151 @@ async def handle_telegram_update(payload: dict):
     # 1. Handle text commands and state machines
     if text:
         # Check TDEE state first
+        # Check Manual Log state
+        manual_log_state = db_get_manual_log_state(user_id)
+        if manual_log_state and not text.startswith("/"):
+            step = manual_log_state["step"]
+            food_name = manual_log_state["food_name"]
+            custom_date = manual_log_state["custom_date"]
+            
+            import datetime
+            now_cambodia = datetime.datetime.utcnow() + datetime.timedelta(hours=7)
+            today_str = now_cambodia.strftime("%Y-%m-%d")
+            yesterday_str = (now_cambodia - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
+            day_before_yesterday_str = (now_cambodia - datetime.timedelta(days=2)).strftime("%Y-%m-%d")
+            
+            if custom_date == today_str:
+                display_date = "ថ្ងៃនេះ"
+            elif custom_date == yesterday_str:
+                display_date = "ម្សិលមិញ"
+            elif custom_date == day_before_yesterday_str:
+                display_date = "ម្សិលម្ងៃ"
+            elif custom_date:
+                date_parts = custom_date.split('-')
+                display_date = f"{date_parts[2]}-{date_parts[1]}-{date_parts[0]}"
+            else:
+                display_date = "ថ្ងៃនេះ"
+                
+            if step == "calories":
+                try:
+                    val = int(text)
+                    if val < 0 or val > 20000:
+                        raise ValueError()
+                    db_set_manual_log_step(user_id, step="protein", calories=val)
+                    await bot.send_message(
+                        chat_id,
+                        f"📝 <b>កត់ត្រាអាហារ៖ {food_name}</b> ({display_date})\n"
+                        f"━━━━━━━━━━━━━━━━━━━━\n"
+                        f"🥩 សូមវាយបញ្ចូល ឬជ្រើសរើសបរិមាណ <b>ប្រូតេអ៊ីន (Protein)</b> ជាក្រាម (g)៖\n\n"
+                        f"<i>(សូមវាយបញ្ចូលជាលេខ ជ្រើសរើសប៊ូតុងខាងក្រោម ឬផ្ញើ /cancel ដើម្បីបោះបង់)</i>",
+                        reply_markup=get_macro_keyboard()
+                    )
+                except ValueError:
+                    await bot.send_message(
+                        chat_id,
+                        f"⚠️ <b>កាឡូរីមិនត្រឹមត្រូវទេ!</b>\n"
+                        f"សូមវាយបញ្ចូលចំនួនកាឡូរីជាលេខរាប់ពី ០ ឡើងទៅ។ ឧទាហរណ៍៖ <b>150</b>\n\n"
+                        f"<i>(ឬផ្ញើ /cancel ដើម្បីបោះបង់)</i>"
+                    )
+                return
+                
+            elif step == "protein":
+                try:
+                    val = int(text)
+                    if val < 0 or val > 1000:
+                        raise ValueError()
+                    db_set_manual_log_step(user_id, step="carbs", protein=val)
+                    await bot.send_message(
+                        chat_id,
+                        f"📝 <b>កត់ត្រាអាហារ៖ {food_name}</b> ({display_date})\n"
+                        f"━━━━━━━━━━━━━━━━━━━━\n"
+                        f"🥩 ប្រូតេអ៊ីន៖ <b>{val}g</b>\n"
+                        f"━━━━━━━━━━━━━━━━━━━━\n"
+                        f"🍞 សូមវាយបញ្ចូល ឬជ្រើសរើសបរិមាណ <b>កាបូអ៊ីដ្រាត (Carbs)</b> ជាក្រាម (g)៖\n\n"
+                        f"<i>(សូមវាយបញ្ចូលជាលេខ ជ្រើសរើសប៊ូតុងខាងក្រោម ឬផ្ញើ /cancel ដើម្បីបោះបង់)</i>",
+                        reply_markup=get_macro_keyboard()
+                    )
+                except ValueError:
+                    await bot.send_message(
+                        chat_id,
+                        f"⚠️ <b>ប្រូតេអ៊ីនមិនត្រឹមត្រូវទេ!</b>\n"
+                        f"សូមវាយបញ្ចូលចំនួនប្រូតេអ៊ីនជាលេខ (ក្រាម) ឬជ្រើសរើសប៊ូតុងខាងក្រោម។ ឧទាហរណ៍៖ <b>15</b>\n\n"
+                        f"<i>(ឬផ្ញើ /cancel ដើម្បីបោះបង់)</i>",
+                        reply_markup=get_macro_keyboard()
+                    )
+                return
+                
+            elif step == "carbs":
+                try:
+                    val = int(text)
+                    if val < 0 or val > 2000:
+                        raise ValueError()
+                    db_set_manual_log_step(user_id, step="fat", carbs=val)
+                    await bot.send_message(
+                        chat_id,
+                        f"📝 <b>កត់ត្រាអាហារ៖ {food_name}</b> ({display_date})\n"
+                        f"━━━━━━━━━━━━━━━━━━━━\n"
+                        f"🥩 ប្រូតេអ៊ីន៖ <b>{manual_log_state['protein']}g</b>\n"
+                        f"🍞 កាបូអ៊ីដ្រាត៖ <b>{val}g</b>\n"
+                        f"━━━━━━━━━━━━━━━━━━━━\n"
+                        f"🧈 សូមវាយបញ្ចូល ឬជ្រើសរើសបរិមាណ <b>ខ្លាញ់សរុប (Fat)</b> ជាក្រាម (g)៖\n\n"
+                        f"<i>(សូមវាយបញ្ចូលជាលេខ ជ្រើសរើសប៊ូតុងខាងក្រោម ឬផ្ញើ /cancel ដើម្បីបោះបង់)</i>",
+                        reply_markup=get_macro_keyboard()
+                    )
+                except ValueError:
+                    await bot.send_message(
+                        chat_id,
+                        f"⚠️ <b>កាបូអ៊ីដ្រាតមិនត្រឹមត្រូវទេ!</b>\n"
+                        f"សូមវាយបញ្ចូលចំនួនកាបូអ៊ីដ្រាតជាលេខ (ក្រាម) ឬជ្រើសរើសប៊ូតុងខាងក្រោម។ ឧទាហរណ៍៖ <b>30</b>\n\n"
+                        f"<i>(ឬផ្ញើ /cancel ដើម្បីបោះបង់)</i>",
+                        reply_markup=get_macro_keyboard()
+                    )
+                return
+                
+            elif step == "fat":
+                try:
+                    val = int(text)
+                    if val < 0 or val > 1000:
+                        raise ValueError()
+                    db_set_manual_log_step(user_id, step="sugar", fat=val)
+                    await bot.send_message(
+                        chat_id,
+                        f"📝 <b>កត់ត្រាអាហារ៖ {food_name}</b> ({display_date})\n"
+                        f"━━━━━━━━━━━━━━━━━━━━\n"
+                        f"🥩 ប្រូតេអ៊ីន៖ <b>{manual_log_state['protein']}g</b>\n"
+                        f"🍞 កាបូអ៊ីដ្រាត៖ <b>{manual_log_state['carbs']}g</b>\n"
+                        f"🧈 ខ្លាញ់៖ <b>{val}g</b>\n"
+                        f"━━━━━━━━━━━━━━━━━━━━\n"
+                        f"🍬 សូមវាយបញ្ចូល ឬជ្រើសរើសបរិមាណ <b>ជាតិស្ករ (Sugar)</b> ជាក្រាម (g)៖\n\n"
+                        f"<i>(សូមវាយបញ្ចូលជាលេខ ជ្រើសរើសប៊ូតុងខាងក្រោម ឬផ្ញើ /cancel ដើម្បីបោះបង់)</i>",
+                        reply_markup=get_macro_keyboard()
+                    )
+                except ValueError:
+                    await bot.send_message(
+                        chat_id,
+                        f"⚠️ <b>ខ្លាញ់សរុបមិនត្រឹមត្រូវទេ!</b>\n"
+                        f"សូមវាយបញ្ចូលចំនួនខ្លាញ់សរុបជាលេខ (ក្រាម) ឬជ្រើសរើសប៊ូតុងខាងក្រោម។ ឧទាហរណ៍៖ <b>10</b>\n\n"
+                        f"<i>(ឬផ្ញើ /cancel ដើម្បីបោះបង់)</i>",
+                        reply_markup=get_macro_keyboard()
+                    )
+                return
+                
+            elif step == "sugar":
+                try:
+                    val = int(text)
+                    if val < 0 or val > 1000:
+                        raise ValueError()
+                    await complete_manual_log(bot, user_id, chat_id, sugar_val=val)
+                except ValueError:
+                    await bot.send_message(
+                        chat_id,
+                        f"⚠️ <b>ជាតិស្ករមិនត្រឹមត្រូវទេ!</b>\n"
+                        f"សូមវាយបញ្ចូលចំនួនជាតិស្ករជាលេខ (ក្រាម) ឬជ្រើសរើសប៊ូតុងខាងក្រោម។ ឧទាហរណ៍៖ <b>5</b>\n\n"
+                        f"<i>(ឬផ្ញើ /cancel ដើម្បីបោះបង់)</i>",
+                        reply_markup=get_macro_keyboard()
+                    )
+                return
+
         tdee_state = db_get_tdee_state(user_id)
         
         # Handle TDEE state transitions
@@ -1558,196 +1999,26 @@ async def handle_telegram_update(payload: dict):
             elif date_token_src and date_token_src.lower() in ["ម្សិលម្ងៃ", "ម្សិលម្ង៉ៃ", "ម្សិលមិញមួយថ្ងៃ"]:
                 display_date = "ម្សិលម្ងៃ"
                 
-            ack = await bot.send_message(
-                chat_id, 
-                f"🔍 <i>កំពុងវិភាគការពណ៌នាអាហារសម្រាប់ {display_date}... សូមរង់ចាំមួយភ្លែត។</i>" if custom_date 
-                else "🔍 <i>កំពុងវិភាគការពណ៌នាអាហាររបស់អ្នក... សូមរង់ចាំមួយភ្លែត។</i>"
+            # Clear any active manual log state for the user
+            db_clear_manual_log_state(user_id)
+            
+            # Initialize manual log state
+            db_set_manual_log_step(
+                user_id,
+                step="calories",
+                food_name=food_description,
+                custom_date=custom_date
             )
-            ack_message_id = ack.get("result", {}).get("message_id")
             
-            try:
-                gemini_key = os.getenv("GEMINI_API_KEY")
-                if not gemini_key:
-                    raise ValueError("GEMINI_API_KEY environment variable is not configured.")
-                
-                client = genai.Client()
-                
-                user_model = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
-                models_to_try = [user_model]
-                for fallback in ["gemini-2.0-flash", "gemini-1.5-flash-8b", "gemini-1.5-flash", "gemini-2.0-flash-lite"]:
-                    if fallback not in models_to_try:
-                        models_to_try.append(fallback)
-                        
-                # Get current Cambodia ICT local time or custom date context
-                now_utc = datetime.datetime.utcnow()
-                now_cambodia = now_utc + datetime.timedelta(hours=7)
-                time_str = now_cambodia.strftime("%I:%M %p")
-                day_name = now_cambodia.strftime("%A")
-                
-                # Determine period of the day
-                hour = now_cambodia.hour
-                if 5 <= hour < 11:
-                    period_kh = "ពេលព្រឹក (Morning)"
-                elif 11 <= hour < 14:
-                    period_kh = "ពេលថ្ងៃត្រង់ (Lunch)"
-                elif 14 <= hour < 17:
-                    period_kh = "ពេលរសៀល (Afternoon)"
-                elif 17 <= hour < 22:
-                    period_kh = "ពេលល្ងាច/យប់ (Evening/Night)"
-                else:
-                    period_kh = "ពេលយប់ជ្រៅ (Late Night)"
-                    
-                profile = db_get_user_profile(user_id)
-                if profile:
-                    profile_context = (
-                        f"The user is a {profile['gender']}, {profile['age']} years old, {profile['height']:.1f} cm tall, "
-                        f"weighing {profile['weight']:.1f} kg. Their physical activity level is mapped as '{profile['activity']}'. "
-                        f"Their daily budget goal is {profile['daily_calorie_budget']} Cal and their goal type is '{profile['goal_type']}'."
-                    )
-                else:
-                    profile_context = "The user is a general individual with a daily budget of 2000 Cal aiming to maintain weight."
-
-                logging_time_context = f"Current Cambodia local time is {time_str} on {day_name} ({period_kh})."
-                if custom_date:
-                    logging_time_context = f"The user is retroactively logging for the Cambodia local date {custom_date}."
-
-                TEXT_SYSTEM_PROMPT = (
-                    "You are a professional nutrition expert and health coach. Analyze the food description text provided and estimate its "
-                    "nutritional details (calories in Cal, protein/fat/carbs/sugar in grams).\n"
-                    f"User Health Context: {profile_context}\n"
-                    f"Logging Context: {logging_time_context}\n"
-                    "YOU MUST RESPOND ENTIRELY IN KHMER LANGUAGE. The `food_name` field must be written in beautiful Khmer script.\n"
-                    "Provide a highly personalized coaching and health recommendation (in the `coaching_recommendation` field) "
-                    "in Khmer tailored specifically to this user's profile, goal, and the logging context.\n"
-                    "CRITICAL SECRECY RULE: You know the user's age, weight, height, and calorie target budget from the User Health Context, BUT YOU MUST KEEP THEM SECRET. Never mention or repeat their age, weight, height, or daily calorie goal in your coaching_recommendation text response. Focus purely on qualitative health insights, digestion, macronutrients, and positive coaching advice.\n"
-                    "Do NOT recite or repeat raw numbers (like '150 Cal' or '10g protein') inside the coaching recommendation text since those are already clearly displayed in the summary card.\n"
-                    "If the text does not describe any food, or you cannot identify any food, "
-                    "you MUST set the `confidence_score` to less than 0.5 (e.g. 0.0 to 0.4), "
-                    "and you can set the `food_name` to 'មិនមែនជាអាហារ ឬរកមិនឃើញ'. "
-                    "Be realistic, objective, and estimate standard portion sizes based on the provided quantities or standard servings."
-                )
-                
-                response = None
-                last_error = None
-                
-                for current_model in models_to_try:
-                    try:
-                        response = client.models.generate_content(
-                            model=current_model,
-                            contents=f"Analyze the following food description and return its nutrition facts in Khmer: {food_description}",
-                            config=types.GenerateContentConfig(
-                                system_instruction=TEXT_SYSTEM_PROMPT,
-                                response_mime_type="application/json",
-                                response_schema=FoodAnalysis,
-                            ),
-                        )
-                        break
-                    except Exception as model_err:
-                        last_error = model_err
-                        print(f"⚠️ Model {current_model} failed or is rate-limited: {model_err}")
-                        continue
-                        
-                if response is None:
-                    raise ValueError(f"All generative models failed. Last error: {last_error}")
-                    
-                analysis = FoodAnalysis.model_validate_json(response.text)
-                
-                if analysis.confidence_score < 0.5:
-                    err_msg = (
-                        "🍳 <b>អូ! ខ្ញុំរកមិនឃើញអាហារទេ!</b>\n"
-                        "━━━━━━━━━━━━━━━━━━━━\n"
-                        "ការពណ៌នារបស់អ្នកមិនហាក់ដូចជាអាហារ ឬបរិមាណមិនច្បាស់លាស់។ សូមប្រាកដថាអ្នកពណ៌នាពីឈ្មោះអាហារ ឬបរិមាណបានត្រឹមត្រូវ រួចផ្ញើមកម្តងទៀត!\n\n"
-                        f"<b>(រកឃើញ៖ {analysis.food_name} | កម្រិតច្បាស់លាស់៖ {analysis.confidence_score * 100:.0f}%)</b>"
-                    )
-                    if ack_message_id:
-                        await bot.edit_message(chat_id, ack_message_id, err_msg)
-                    else:
-                        await bot.send_message(chat_id, err_msg)
-                    return
-                    
-                inserted_meal_id = db_add_meal(user_id, analysis, custom_date)
-                await sync_meal_to_google_fit(user_id, analysis)
-                
-                # Fetch remaining calories for custom date or today
-                if custom_date:
-                    today_meals, total_cals = db_get_day_meals(user_id, custom_date)
-                    total_burn = db_get_day_burn(user_id, custom_date)
-                else:
-                    today_meals, total_cals = db_get_today_meals(user_id)
-                    total_burn = db_get_today_burn(user_id)
-                    
-                goal = db_get_user_goal(user_id)
-                remaining = goal - total_cals
-                balance_emoji = "⚖️" if remaining >= 0 else "🚨"
-                remaining_str = f"សល់ <b>{remaining} Cal</b>" if remaining >= 0 else f"លើស <b>{-remaining} Cal</b>"
-                
-                # Format custom display date
-                if custom_date:
-                    date_parts = custom_date.split('-')
-                    formatted_display_date = f"{date_parts[2]}-{date_parts[1]}-{date_parts[0]}"
-                else:
-                    formatted_display_date = now_cambodia.strftime('%d-%m-%Y')
-                
-                result_card = (
-                    "🍳 <b>លទ្ធផលវិភាគអាហារូបត្ថម្ភ (Direct Log)</b>\n"
-                    "━━━━━━━━━━━━━━━━━━━━\n"
-                    f"🥗 <b>អាហារ៖</b> <b>{analysis.food_name}</b>\n"
-                    f"📊 <b>ភាពជឿជាក់៖</b> <b>{analysis.confidence_score * 100:.0f}%</b>\n"
-                    f"📅 <b>កាលបរិច្ឆេទ៖</b> <b>{formatted_display_date}</b>\n\n"
-                    f"🔥 <b>ថាមពល៖</b> <b>{analysis.calories} Cal</b>\n"
-                    "━━━━━━━━━━━━━━━━━━━━\n"
-                    f"🥩 <b>ប្រូតេអ៊ីន៖</b> <b>{analysis.protein}g</b>\n"
-                    f"🧈 <b>ខ្លាញ់សរុប៖</b> <b>{analysis.fat}g</b>\n"
-                    f"🍞 <b>កាបូអ៊ីដ្រាត៖</b> <b>{analysis.carbs}g</b>\n"
-                    f"🍬 <b>ក្នុងនោះជាតិស្ករ៖</b> <b>{analysis.sugar}g</b>\n"
-                    "━━━━━━━━━━━━━━━━━━━━\n"
-                    f"🏃 <b>បានដុតរំលាយ៖</b> <b>{total_burn} Cal</b>\n"
-                    f"{balance_emoji} <b>កាឡូរី ({display_date})៖</b> <b>{total_cals}</b> / <b>{goal} Cal</b> ({remaining_str})\n"
-                    "━━━━━━━━━━━━━━━━━━━━\n"
-                    f"💡 <b>ការណែនាំពីគ្រូ៖</b>\n"
-                    f"« {analysis.coaching_recommendation} »\n"
-                    "━━━━━━━━━━━━━━━━━━━━\n"
-                    "💾 <b>បានកត់ត្រាចូលគណនីរួចរាល់! ប្រសិនបើចង់លុបកំណត់ត្រានេះវិញ សូមចុចប៊ូតុងខាងក្រោម៖</b>"
-                )
-                
-                inline_reply_markup = {
-                    "inline_keyboard": [
-                        [
-                            {
-                                "text": "❌ លុបកំណត់ត្រានេះ",
-                                "callback_data": f"delete_meal:{inserted_meal_id}"
-                            }
-                        ]
-                    ]
-                }
-                
-                if ack_message_id:
-                    await bot.edit_message(chat_id, ack_message_id, result_card, reply_markup=inline_reply_markup)
-                else:
-                    await bot.send_message(chat_id, result_card, reply_markup=inline_reply_markup)
-                    
-            except Exception as e:
-                print(f"Error during manual food text logging analysis: {e}")
-                err_msg = str(e)
-                if any(x in err_msg for x in ["429", "RESOURCE_EXHAUSTED", "LimitExceeded", "quota"]):
-                    fail_msg = (
-                        "⚠️ <b>ការវិភាគអាហារូបត្ថម្ភបានបរាជ័យ</b>\n"
-                        "━━━━━━━━━━━━━━━━━━━━\n"
-                        "មានបញ្ហាបច្ចេកទេសមួយបានកើតឡើងក្នុងពេលដំណើរការវិភាគការពណ៌នារបស់អ្នក។ សូមព្យាយាមម្តងទៀតនៅពេលក្រោយ។"
-                    )
-                else:
-                    fail_msg = (
-                        "⚠️ <b>ការវិភាគអាហារូបត្ថម្ភបានបរាជ័យ</b>\n"
-                        "━━━━━━━━━━━━━━━━━━━━\n"
-                        "មានបញ្ហាបច្ចេកទេសមួយបានកើតឡើងក្នុងពេលដំណើរការវិភាគការពណ៌នារបស់អ្នក។\n\n"
-                        f"<b>ព័ត៌មានលម្អិត:</b> <code>{err_msg}</code>"
-                    )
-                if ack_message_id:
-                    await bot.edit_message(chat_id, ack_message_id, fail_msg)
-                else:
-                    await bot.send_message(chat_id, fail_msg)
+            prompt_text = (
+                f"📝 <b>កត់ត្រាអាហារ៖ {food_description}</b> ({display_date})\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"🔥 សូមវាយបញ្ចូលចំនួន <b>កាឡូរី (Calories/Cal)</b>៖\n\n"
+                f"<i>(សូមវាយបញ្ចូលជាលេខ ឬផ្ញើ /cancel ដើម្បីបោះបង់)</i>"
+            )
+            await bot.send_message(chat_id, prompt_text)
             return
-            
+
         elif text.startswith("/goal"):
             parts = text.split()
             if len(parts) < 2:
