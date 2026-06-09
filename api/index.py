@@ -245,7 +245,7 @@ def db_update_user_goal(user_id: int, goal: int):
 def parse_custom_date(token: str) -> str | None:
     """Parses a relative or absolute date token and returns YYYY-MM-DD format (Cambodia local time)."""
     token = token.strip().lower()
-    import datetime
+    # import datetime (removed local import)
     import re
     # Cambodia local time is UTC+7
     now_cambodia = datetime.datetime.utcnow() + datetime.timedelta(hours=7)
@@ -531,7 +531,7 @@ def db_get_day_burn(user_id: int, date_str: str) -> int:
 
 def db_get_today_burn(user_id: int) -> int:
     """Aggregates all calories burned today (UTC date) for a user."""
-    import datetime
+    # import datetime (removed local import)
     now_kh = datetime.datetime.utcnow() + datetime.timedelta(hours=7)
     return db_get_day_burn(user_id, now_kh.strftime("%Y-%m-%d"))
 
@@ -636,7 +636,7 @@ def db_get_weekly_nosweet(user_id: int, start_date_str: str, end_date_str: str) 
 
 def db_get_today_meals(user_id: int) -> tuple[list[dict], int]:
     """Retrieves all meals logged today (UTC date) for a user, returning list and count."""
-    import datetime
+    # import datetime (removed local import)
     now_kh = datetime.datetime.utcnow() + datetime.timedelta(hours=7)
     return db_get_day_meals(user_id, now_kh.strftime("%Y-%m-%d"))
 
@@ -839,7 +839,7 @@ async def complete_manual_log(bot, user_id: int, chat_id: int, sugar_val: int, m
     db_clear_manual_log_state(user_id)
     
     # Get current time and format response
-    import datetime
+    # import datetime (removed local import)
     now_cambodia = datetime.datetime.utcnow() + datetime.timedelta(hours=7)
     
     today_str = now_cambodia.strftime("%Y-%m-%d")
@@ -1146,7 +1146,7 @@ async def handle_telegram_update(payload: dict):
             food_name = state["food_name"]
             custom_date = state["custom_date"]
             
-            import datetime
+            # import datetime (removed local import)
             now_cambodia = datetime.datetime.utcnow() + datetime.timedelta(hours=7)
             today_str = now_cambodia.strftime("%Y-%m-%d")
             yesterday_str = (now_cambodia - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
@@ -1674,7 +1674,7 @@ async def handle_telegram_update(payload: dict):
             food_name = manual_log_state["food_name"]
             custom_date = manual_log_state["custom_date"]
             
-            import datetime
+            # import datetime (removed local import)
             now_cambodia = datetime.datetime.utcnow() + datetime.timedelta(hours=7)
             today_str = now_cambodia.strftime("%Y-%m-%d")
             yesterday_str = (now_cambodia - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
@@ -2281,7 +2281,7 @@ async def handle_telegram_update(payload: dict):
                             
                             activity_date = session.get('activity_date')
                             # Cambodia today
-                            # import datetime (removed local import to prevent shadowing global name)
+                            # import datetime (removed local import)
                             now_kh = datetime.datetime.utcnow() + datetime.timedelta(hours=7)
                             today_str = now_kh.strftime("%Y-%m-%d")
                             
@@ -2378,7 +2378,7 @@ async def handle_telegram_update(payload: dict):
             try:
                 db_add_burn(user_id, calories, 'Manual', 'Manual', custom_date)
                 if custom_date:
-                    # import datetime (removed local import to prevent shadowing global name)
+                    # import datetime (removed local import)
                     now_kh = datetime.datetime.utcnow() + datetime.timedelta(hours=7)
                     date_parts = custom_date.split('-')
                     formatted_display_date = f"{date_parts[2]}-{date_parts[1]}-{date_parts[0]}"
@@ -3140,7 +3140,7 @@ async def fetch_latest_strava_activity(user_id: int) -> dict:
     if not access_token:
         return None
         
-    import datetime
+    # import datetime (removed local import)
     import time
     
     # Fetch last 7 days of activities in Cambodia time (ICT - UTC+7)
@@ -3426,7 +3426,7 @@ async def fetch_latest_fit_session(user_id: int) -> dict:
     if not access_token:
         return None
         
-    import datetime
+    # import datetime (removed local import)
     seven_days_ago = datetime.datetime.utcnow() - datetime.timedelta(days=7)
     start_time_iso = seven_days_ago.strftime("%Y-%m-%dT%H:%M:%S.000Z")
     
@@ -4110,7 +4110,7 @@ async def fetch_specific_strava_activity(user_id: int, activity_id: int) -> dict
     if not access_token:
         return None
         
-    import datetime
+    # import datetime (removed local import)
     headers = {
         "Authorization": f"Bearer {access_token}"
     }
@@ -4307,7 +4307,7 @@ async def strava_webhook_event(request: Request):
                         db_add_burn(user_id, session['calories'], act_key, "Strava", custom_date=session.get('activity_date'))
                         
                         activity_date = session.get('activity_date')
-                        import datetime
+                        # import datetime (removed local import)
                         now_kh = datetime.datetime.utcnow() + datetime.timedelta(hours=7)
                         today_str = now_kh.strftime("%Y-%m-%d")
                         
@@ -4354,7 +4354,7 @@ async def strava_webhook_event(request: Request):
 @app.get("/api/tma/dashboard")
 async def tma_get_dashboard(user_id: int):
     # Ensure the user is registered (1 transaction, done inline)
-    import datetime
+    # import datetime (removed local import)
     now_kh = datetime.datetime.utcnow() + datetime.timedelta(hours=7)
     date_str = now_kh.strftime("%Y-%m-%d")
     
@@ -4824,7 +4824,7 @@ async def tma_delete_meal(user_id: int, meal_id: int):
 
 @app.get("/api/tma/weekly")
 async def tma_get_weekly(user_id: int, start_date: Optional[str] = None, end_date: Optional[str] = None):
-    import datetime
+    # import datetime (removed local import)
     now_utc = datetime.datetime.utcnow()
     now_cambodia = now_utc + datetime.timedelta(hours=7)
     
