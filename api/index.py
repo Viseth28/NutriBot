@@ -57,6 +57,24 @@ class OpenRouterResponse:
             cleaned_text = cleaned_text[:-3]
         self.text = cleaned_text.strip()
 
+def parse_food_analysis(text: str) -> FoodAnalysis:
+    import json
+    cleaned = text.strip()
+    if cleaned.startswith("```json"):
+        cleaned = cleaned[7:]
+    elif cleaned.startswith("```"):
+        cleaned = cleaned[3:]
+    if cleaned.endswith("```"):
+        cleaned = cleaned[:-3]
+    cleaned = cleaned.strip()
+
+    data = json.loads(cleaned)
+    if isinstance(data, list):
+        if len(data) == 0:
+            raise ValueError("AI returned an empty food analysis list.")
+        data = data[0]
+    return FoodAnalysis.model_validate(data)
+
 async def generate_openrouter_content(
     system_prompt: str,
     user_prompt: str,
@@ -2112,7 +2130,7 @@ async def handle_telegram_update(payload: dict):
                 )
                 
                 # Validate output using Pydantic
-                analysis = FoodAnalysis.model_validate_json(response.text)
+                analysis = parse_food_analysis(response.text)
                 
                 # Check for non-food or low confidence edge cases
                 if analysis.confidence_score < 0.5:
@@ -3060,7 +3078,7 @@ async def handle_telegram_update(payload: dict):
             )
 
             # Validate output using Pydantic
-            analysis = FoodAnalysis.model_validate_json(response.text)
+            analysis = parse_food_analysis(response.text)
 
             # Check for non-food or low confidence edge cases
             if analysis.confidence_score < 0.5:
@@ -4690,7 +4708,7 @@ async def tma_add_meal(req: TMAMealRequest):
         return {"ok": False, "error": f"OpenRouter Error: {err_str}"}
         
     try:
-        analysis = FoodAnalysis.model_validate_json(response.text)
+        analysis = parse_food_analysis(response.text)
         if analysis.confidence_score < 0.5:
             return {"ok": False, "error": "Food not found or description is unclear."}
             
@@ -4795,7 +4813,7 @@ async def tma_add_meal_photo(req: TMAMealPhotoRequest):
         return {"ok": False, "error": f"OpenRouter Error: {err_str}"}
         
     try:
-        analysis = FoodAnalysis.model_validate_json(response.text)
+        analysis = parse_food_analysis(response.text)
         if analysis.confidence_score < 0.5:
             return {"ok": False, "error": "Food not found or portion is unclear in the image."}
             
@@ -5167,7 +5185,7 @@ async def tma_search_food(user_id: int, query: str):
         return {"ok": False, "error": f"OpenRouter Error: {err_str}"}
 
     try:
-        analysis = FoodAnalysis.model_validate_json(response.text)
+        analysis = parse_food_analysis(response.text)
         if analysis.confidence_score < 0.5:
             return {"ok": False, "error": "Food not found or invalid description."}
             
