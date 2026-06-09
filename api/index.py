@@ -59,6 +59,7 @@ class OpenRouterResponse:
 
 def parse_food_analysis(text: str) -> FoodAnalysis:
     import json
+    import re
     cleaned = text.strip()
     if cleaned.startswith("```json"):
         cleaned = cleaned[7:]
@@ -73,7 +74,72 @@ def parse_food_analysis(text: str) -> FoodAnalysis:
         if len(data) == 0:
             raise ValueError("AI returned an empty food analysis list.")
         data = data[0]
-    return FoodAnalysis.model_validate(data)
+
+    if not isinstance(data, dict):
+        raise ValueError(f"AI response did not contain a valid JSON object: {data}")
+
+    # Normalize keys (handle synonyms and casing)
+    normalized_data = {}
+    for k, v in data.items():
+        k_lower = k.lower().strip()
+        if k_lower in ["food_name", "name", "food"]:
+            normalized_data["food_name"] = v
+        elif k_lower in ["calories", "calorie", "cal", "energy"]:
+            normalized_data["calories"] = v
+        elif k_lower in ["protein", "proteins", "prot"]:
+            normalized_data["protein"] = v
+        elif k_lower in ["fat", "fats", "total_fat"]:
+            normalized_data["fat"] = v
+        elif k_lower in ["carbs", "carb", "carbohydrates", "carbohydrate"]:
+            normalized_data["carbs"] = v
+        elif k_lower in ["sugar", "sugars"]:
+            normalized_data["sugar"] = v
+        elif k_lower in ["confidence", "confidence_score"]:
+            normalized_data["confidence_score"] = v
+        elif k_lower in ["coaching_recommendation", "coaching", "recommendation", "advice", "coaching_advice"]:
+            normalized_data["coaching_recommendation"] = v
+        else:
+            normalized_data[k] = v
+
+    # Extract integers from string descriptions for numeric fields
+    def extract_int(val) -> int:
+        if val is None:
+            return 0
+        if isinstance(val, (int, float)):
+            return int(round(val))
+        if isinstance(val, str):
+            numbers = re.findall(r"\d+", val)
+            if numbers:
+                return int(numbers[0])
+        return 0
+
+    normalized_data["food_name"] = str(normalized_data.get("food_name", "Unknown Food Item"))
+    normalized_data["calories"] = extract_int(normalized_data.get("calories"))
+    normalized_data["protein"] = extract_int(normalized_data.get("protein"))
+    normalized_data["fat"] = extract_int(normalized_data.get("fat"))
+    normalized_data["carbs"] = extract_int(normalized_data.get("carbs"))
+    normalized_data["sugar"] = extract_int(normalized_data.get("sugar"))
+    
+    # Handle confidence score float extraction
+    conf = normalized_data.get("confidence_score")
+    if conf is None:
+        normalized_data["confidence_score"] = 0.9
+    elif isinstance(conf, (int, float)):
+        normalized_data["confidence_score"] = float(conf)
+    elif isinstance(conf, str):
+        floats = re.findall(r"\d+\.\d+|\d+", conf)
+        if floats:
+            val = float(floats[0])
+            if val > 1.0:
+                val = val / 100.0
+            normalized_data["confidence_score"] = val
+        else:
+            normalized_data["confidence_score"] = 0.9
+
+    # Handle coaching recommendation string
+    normalized_data["coaching_recommendation"] = str(normalized_data.get("coaching_recommendation", "Eat in moderation and stay active!"))
+
+    return FoodAnalysis.model_validate(normalized_data)
 
 async def generate_openrouter_content(
     system_prompt: str,
