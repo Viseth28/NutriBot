@@ -4,6 +4,14 @@
     {
       "source": "/api/(.*)",
       "destination": "/api/index.py"
+    },
+    {
+      "source": "/miniapp",
+      "destination": "/api/index.py"
+    },
+    {
+      "source": "/miniapp/(.*)",
+      "destination": "/api/index.py"
     }
   ],
   "crons": [
