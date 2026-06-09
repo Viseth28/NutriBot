@@ -83,13 +83,13 @@ async def generate_openrouter_content(
     json_mode: bool = False
 ) -> OpenRouterResponse:
     """
-    Asynchronously calls OpenRouter API using httpx.
+    Asynchronously calls OpenRouter API using httpx with automatic model fallbacks.
     """
     api_key = os.getenv("OPENROUTER_API_KEY")
     if not api_key:
         raise ValueError("OPENROUTER_API_KEY environment variable is not configured.")
 
-    model = os.getenv("OPENROUTER_MODEL", "google/gemma-4-31b-it:free")
+    configured_model = os.getenv("OPENROUTER_MODEL")
     url = "https://openrouter.ai/api/v1/chat/completions"
 
     headers = {
@@ -120,24 +120,46 @@ async def generate_openrouter_content(
         {"role": "user", "content": user_content}
     ]
 
-    payload = {
-        "model": model,
-        "messages": messages,
-    }
+    # Construct the fallback list of models
+    if configured_model:
+        # If the user configured a model, put it first, then add backups
+        if image_bytes:
+            models_to_try = [configured_model, "google/gemma-4-31b-it:free", "nex-agi/nex-n2-pro:free", "openrouter/free"]
+        else:
+            models_to_try = [configured_model, "google/gemma-4-31b-it:free", "meta-llama/llama-3.3-70b-instruct:free", "meta-llama/llama-3.2-3b-instruct:free", "openrouter/free"]
+    else:
+        if image_bytes:
+            models_to_try = ["google/gemma-4-31b-it:free", "nex-agi/nex-n2-pro:free", "openrouter/free"]
+        else:
+            models_to_try = ["google/gemma-4-31b-it:free", "meta-llama/llama-3.3-70b-instruct:free", "meta-llama/llama-3.2-3b-instruct:free", "openrouter/free"]
 
-    if json_mode:
-        payload["response_format"] = {"type": "json_object"}
+    last_err = None
+    for model_name in models_to_try:
+        payload = {
+            "model": model_name,
+            "messages": messages,
+        }
+        if json_mode:
+            payload["response_format"] = {"type": "json_object"}
 
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        resp = await client.post(url, headers=headers, json=payload)
-        resp.raise_for_status()
-        res_json = resp.json()
-        
-        if "choices" not in res_json or len(res_json["choices"]) == 0:
-            raise ValueError(f"Invalid OpenRouter response: {res_json}")
-            
-        content = res_json["choices"][0]["message"]["content"]
-        return OpenRouterResponse(content)
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                resp = await client.post(url, headers=headers, json=payload)
+                resp.raise_for_status()
+                res_json = resp.json()
+                
+                if "choices" not in res_json or len(res_json["choices"]) == 0:
+                    raise ValueError(f"Invalid OpenRouter response: {res_json}")
+                    
+                content = res_json["choices"][0]["message"]["content"]
+                return OpenRouterResponse(content)
+        except Exception as e:
+            print(f"OpenRouter call failed for model {model_name}: {e}. Trying next model...")
+            last_err = e
+            continue
+
+    # If all models in the fallback list failed
+    raise last_err
 
 
 # ---------------------------------------------------------
