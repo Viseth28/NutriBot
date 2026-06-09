@@ -63,7 +63,7 @@ async def generate_openrouter_content(
     if not api_key:
         raise ValueError("OPENROUTER_API_KEY environment variable is not configured.")
 
-    model = os.getenv("OPENROUTER_MODEL", "google/gemini-2.5-flash:free")
+    model = os.getenv("OPENROUTER_MODEL", "openrouter/free")
     url = "https://openrouter.ai/api/v1/chat/completions"
 
     headers = {
