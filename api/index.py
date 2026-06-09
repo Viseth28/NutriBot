@@ -37,14 +37,14 @@ app.mount("/miniapp", StaticFiles(directory=miniapp_dir, html=True), name="minia
 # Pydantic Schemas for Gemini Structured Output
 # ---------------------------------------------------------
 class FoodAnalysis(BaseModel):
-    food_name: str = Field(description="The primary name or description of the identified food dish in Khmer language.")
+    food_name: str = Field(description="The primary name or description of the identified food dish in English.")
     calories: int = Field(description="Estimated calories in kilocalories (Cal).")
     protein: int = Field(description="Estimated protein in grams (g).")
     fat: int = Field(description="Estimated total fat in grams (g).")
     carbs: int = Field(description="Estimated total carbohydrates in grams (g).")
     sugar: int = Field(description="Estimated sugar content in grams (g).")
     confidence_score: float = Field(description="Model confidence from 0.0 (not food/unknown) to 1.0 (highly confident food).")
-    coaching_recommendation: str = Field(description="A highly personalized, actionable health/coaching recommendation in Khmer language tailored specifically to this user's profile and goal (e.g., protein density, health tips, fullness, weight loss suitability).")
+    coaching_recommendation: str = Field(description="A highly personalized, actionable health/coaching recommendation in English tailored specifically to this user's profile and goal (e.g., protein density, health tips, fullness, weight loss suitability).")
 
 
 # ---------------------------------------------------------
@@ -250,13 +250,13 @@ def parse_custom_date(token: str) -> str | None:
     # Cambodia local time is UTC+7
     now_cambodia = datetime.datetime.utcnow() + datetime.timedelta(hours=7)
     
-    if token in ["yesterday", "ម្សិលមិញ"]:
+    if token in ["yesterday", "yesterday"]:
         target_date = now_cambodia - datetime.timedelta(days=1)
         return target_date.strftime("%Y-%m-%d")
-    elif token in ["ម្សិលម្ងៃ", "ម្សិលម្ង៉ៃ", "ម្សិលមិញមួយថ្ងៃ"]:
+    elif token in ["day before yesterday", "day before yesterday"]:
         target_date = now_cambodia - datetime.timedelta(days=2)
         return target_date.strftime("%Y-%m-%d")
-    elif token in ["today", "ថ្ងៃនេះ"]:
+    elif token in ["today", "today"]:
         return now_cambodia.strftime("%Y-%m-%d")
         
     # Check DD-MM-YYYY or DD/MM/YYYY
@@ -797,7 +797,7 @@ def get_macro_keyboard():
                 {"text": "20g", "callback_data": "manual_log_macro:20"}
             ],
             [
-                {"text": "រំលង (Skip)", "callback_data": "manual_log_macro:skip"}
+                {"text": "Skip", "callback_data": "manual_log_macro:skip"}
             ]
         ]
     }
@@ -805,7 +805,7 @@ def get_macro_keyboard():
 async def complete_manual_log(bot, user_id: int, chat_id: int, sugar_val: int, message_id_to_edit: int = None):
     state = db_get_manual_log_state(user_id)
     if not state:
-        await bot.send_message(chat_id, "⚠️ រកមិនឃើញទិន្នន័យចាស់! សូមចាប់ផ្តើមម្តងទៀត។")
+        await bot.send_message(chat_id, "⚠️ No previous session found! Please start again.")
         return
         
     food_name = state["food_name"]
@@ -823,7 +823,7 @@ async def complete_manual_log(bot, user_id: int, chat_id: int, sugar_val: int, m
         fat=fat,
         sugar=sugar_val,
         confidence_score=1.0,
-        coaching_recommendation="កំណត់ត្រាដោយផ្ទាល់"
+        coaching_recommendation="Manual entry"
     )
     
     # Save to database
@@ -847,16 +847,16 @@ async def complete_manual_log(bot, user_id: int, chat_id: int, sugar_val: int, m
     day_before_yesterday_str = (now_cambodia - datetime.timedelta(days=2)).strftime("%Y-%m-%d")
     
     if custom_date == today_str:
-        display_date_lbl = "ថ្ងៃនេះ"
+        display_date_lbl = "today"
     elif custom_date == yesterday_str:
-        display_date_lbl = "ម្សិលមិញ"
+        display_date_lbl = "yesterday"
     elif custom_date == day_before_yesterday_str:
-        display_date_lbl = "ម្សិលម្ងៃ"
+        display_date_lbl = "day before yesterday"
     elif custom_date:
         date_parts = custom_date.split('-')
         display_date_lbl = f"{date_parts[2]}-{date_parts[1]}-{date_parts[0]}"
     else:
-        display_date_lbl = "ថ្ងៃនេះ"
+        display_date_lbl = "today"
         
     if custom_date:
         today_meals, total_cals = db_get_day_meals(user_id, custom_date)
@@ -871,34 +871,34 @@ async def complete_manual_log(bot, user_id: int, chat_id: int, sugar_val: int, m
     goal = db_get_user_goal(user_id)
     remaining = goal - total_cals
     balance_emoji = "⚖️" if remaining >= 0 else "🚨"
-    remaining_str = f"សល់ <b>{remaining} Cal</b>" if remaining >= 0 else f"លើស <b>{-remaining} Cal</b>"
+    remaining_str = f"remaining <b>{remaining} Cal</b>" if remaining >= 0 else f"over <b>{-remaining} Cal</b>"
     
     result_card = (
-        "🍳 <b>លទ្ធផលកត់ត្រាអាហារ (Manual Log)</b>\n"
+        "🍳 <b>Meal Recorded (Manual Log)</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        f"🥗 <b>អាហារ៖</b> <b>{food_name}</b>\n"
-        f"📅 <b>កាលបរិច្ឆេទ៖</b> <b>{formatted_display_date}</b>\n\n"
-        f"🔥 <b>ថាមពល៖</b> <b>{calories} Cal</b>\n"
+        f"🥗 <b>Food:</b> <b>{food_name}</b>\n"
+        f"📅 <b>Date:</b> <b>{formatted_display_date}</b>\n\n"
+        f"🔥 <b>Energy:</b> <b>{calories} Cal</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        f"🥩 <b>ប្រូតេអ៊ីន៖</b> <b>{protein}g</b>\n"
-        f"🧈 <b>ខ្លាញ់សរុប៖</b> <b>{fat}g</b>\n"
-        f"🍞 <b>កាបូអ៊ីដ្រាត៖</b> <b>{carbs}g</b>\n"
-        f"🍬 <b>ក្នុងនោះជាតិស្ករ៖</b> <b>{sugar_val}g</b>\n"
+        f"🥩 <b>Protein:</b> <b>{protein}g</b>\n"
+        f"🧈 <b>Total Fat:</b> <b>{fat}g</b>\n"
+        f"🍞 <b>Carbohydrates:</b> <b>{carbs}g</b>\n"
+        f"🍬 <b>Of which Sugars:</b> <b>{sugar_val}g</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        f"🏃 <b>បានដុតរំលាយ៖</b> <b>{total_burn} Cal</b>\n"
-        f"{balance_emoji} <b>កាឡូរី ({display_date_lbl})៖</b> <b>{total_cals}</b> / <b>{goal} Cal</b> ({remaining_str})\n"
+        f"🏃 <b>Burned:</b> <b>{total_burn} Cal</b>\n"
+        f"{balance_emoji} <b>Calories ({display_date_lbl}):</b> <b>{total_cals}</b> / <b>{goal} Cal</b> ({remaining_str})\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        "💡 <b>ការណែនាំ៖</b>\n"
-        "« កំណត់ត្រាដោយផ្ទាល់ »\n"
+        "💡 <b>Coaching:</b>\n"
+        "« Manual entry »\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        "💾 <b>បានកត់ត្រាចូលគណនីរួចរាល់! ប្រសិនបើចង់លុបកំណត់ត្រានេះវិញ សូមចុចប៊ូតុងខាងក្រោម៖</b>"
+        "💾 <b>Successfully logged! If you want to delete this log, click the button below:</b>"
     )
     
     inline_reply_markup = {
         "inline_keyboard": [
             [
                 {
-                    "text": "❌ លុបកំណត់ត្រានេះ",
+                    "text": "❌ Delete this log",
                     "callback_data": f"delete_meal:{inserted_meal_id}"
                 }
             ]
@@ -1107,10 +1107,10 @@ SYSTEM_PROMPT = (
     "You are a professional nutrition expert. Analyze the food in the provided image and estimate its "
     "nutritional details (calories in Cal, protein/fat/carbs/sugar in grams). "
     "YOU MUST RESPOND ENTIRELY IN KHMER LANGUAGE. The `food_name` field must be written in beautiful Khmer script "
-    "(e.g., 'បាយឆាគ្រឿង' or 'ញាំមីស៊ុប'). "
+    "(e.g., 'fried rice' or 'noodle soup'). "
     "If the image does not show any food, or you cannot identify any food, "
     "you MUST set the `confidence_score` to less than 0.5 (e.g. 0.0 to 0.4), "
-    "and you can set the `food_name` to 'មិនមែនជាអាហារ ឬរកមិនឃើញ'."
+    "and you can set the `food_name` to 'not food or not found'."
     "Be realistic, objective, and estimate standard portion sizes for single servings unless "
     "there's strong visual context stating otherwise."
 )
@@ -1137,7 +1137,7 @@ async def handle_telegram_update(payload: dict):
         if callback_data.startswith("manual_log_macro:"):
             state = db_get_manual_log_state(user_id)
             if not state:
-                await bot.answer_callback_query(callback_id, "⚠️ គ្មានកំណត់ត្រាសកម្មទេ! សូមចាប់ផ្តើមម្តងទៀត។", show_alert=True)
+                await bot.answer_callback_query(callback_id, "⚠️ No active manual logging session found!", show_alert=True)
                 return
                 
             val_str = callback_data.split(":")[1]
@@ -1153,29 +1153,29 @@ async def handle_telegram_update(payload: dict):
             day_before_yesterday_str = (now_cambodia - datetime.timedelta(days=2)).strftime("%Y-%m-%d")
             
             if custom_date == today_str:
-                display_date = "ថ្ងៃនេះ"
+                display_date = "Today"
             elif custom_date == yesterday_str:
-                display_date = "ម្សិលមិញ"
+                display_date = "Yesterday"
             elif custom_date == day_before_yesterday_str:
-                display_date = "ម្សិលម្ងៃ"
+                display_date = "Day before yesterday"
             elif custom_date:
                 date_parts = custom_date.split('-')
                 display_date = f"{date_parts[2]}-{date_parts[1]}-{date_parts[0]}"
             else:
-                display_date = "ថ្ងៃនេះ"
+                display_date = "Today"
                 
-            await bot.answer_callback_query(callback_id, "កត់ត្រារួចរាល់!")
+            await bot.answer_callback_query(callback_id, "Recorded!")
             
             if step == "protein":
                 db_set_manual_log_step(user_id, step="carbs", protein=val)
                 await bot.edit_message(
                     chat_id,
                     message_id,
-                    f"📝 <b>កត់ត្រាអាហារ៖ {food_name}</b> ({display_date})\n"
+                    f"📝 <b>Log Food: {food_name}</b> ({display_date})\n"
                     f"━━━━━━━━━━━━━━━━━━━━\n"
-                    f"🥩 ប្រូតេអ៊ីន៖ <b>{val}g</b>\n"
+                    f"🥩 Protein: <b>{val}g</b>\n"
                     f"━━━━━━━━━━━━━━━━━━━━\n"
-                    f"🍞 សូមវាយបញ្ចូល ឬជ្រើសរើសបរិមាណ <b>កាបូអ៊ីដ្រាត (Carbs)</b> ជាក្រាម (g)៖",
+                    f"🍞 Please enter or select amount of <b>Carbohydrates (Carbs)</b> in grams (g):",
                     reply_markup=get_macro_keyboard()
                 )
             elif step == "carbs":
@@ -1183,12 +1183,12 @@ async def handle_telegram_update(payload: dict):
                 await bot.edit_message(
                     chat_id,
                     message_id,
-                    f"📝 <b>កត់ត្រាអាហារ៖ {food_name}</b> ({display_date})\n"
+                    f"📝 <b>Log Food: {food_name}</b> ({display_date})\n"
                     f"━━━━━━━━━━━━━━━━━━━━\n"
-                    f"🥩 ប្រូតេអ៊ីន៖ <b>{state['protein']}g</b>\n"
-                    f"🍞 កាបូអ៊ីដ្រាត៖ <b>{val}g</b>\n"
+                    f"🥩 Protein: <b>{state['protein']}g</b>\n"
+                    f"🍞 Carbs: <b>{val}g</b>\n"
                     f"━━━━━━━━━━━━━━━━━━━━\n"
-                    f"🧈 សូមវាយបញ្ចូល ឬជ្រើសរើសបរិមាណ <b>ខ្លាញ់សរុប (Fat)</b> ជាក្រាម (g)៖",
+                    f"🧈 Please enter or select amount of <b>Total Fat (Fat)</b> in grams (g):",
                     reply_markup=get_macro_keyboard()
                 )
             elif step == "fat":
@@ -1196,13 +1196,13 @@ async def handle_telegram_update(payload: dict):
                 await bot.edit_message(
                     chat_id,
                     message_id,
-                    f"📝 <b>កត់ត្រាអាហារ៖ {food_name}</b> ({display_date})\n"
+                    f"📝 <b>Log Food: {food_name}</b> ({display_date})\n"
                     f"━━━━━━━━━━━━━━━━━━━━\n"
-                    f"🥩 ប្រូតេអ៊ីន៖ <b>{state['protein']}g</b>\n"
-                    f"🍞 កាបូអ៊ីដ្រាត៖ <b>{state['carbs']}g</b>\n"
-                    f"🧈 ខ្លាញ់៖ <b>{val}g</b>\n"
+                    f"🥩 Protein: <b>{state['protein']}g</b>\n"
+                    f"🍞 Carbs: <b>{state['carbs']}g</b>\n"
+                    f"🧈 Fat: <b>{val}g</b>\n"
                     f"━━━━━━━━━━━━━━━━━━━━\n"
-                    f"🍬 សូមវាយបញ្ចូល ឬជ្រើសរើសបរិមាណ <b>ជាតិស្ករ (Sugar)</b> ជាក្រាម (g)៖",
+                    f"🍬 Please enter or select amount of <b>Sugar (Sugar)</b> in grams (g):",
                     reply_markup=get_macro_keyboard()
                 )
             elif step == "sugar":
@@ -1213,46 +1213,46 @@ async def handle_telegram_update(payload: dict):
             meal_id = int(callback_data.split(":")[1])
             try:
                 db_delete_meal(user_id, meal_id)
-                await bot.answer_callback_query(callback_id, "🥗 លុបកំណត់ត្រាអាហារបានជោគជ័យ!")
+                await bot.answer_callback_query(callback_id, "🥗 Meal log deleted successfully!")
                 
                 cleared_card = (
-                    "🍳 <b>លទ្ធផលវិភាគអាហារូបត្ថម្ភ</b>\n"
+                    "🍳 <b>Nutritional Analysis Results</b>\n"
                     "━━━━━━━━━━━━━━━━━━━━\n"
-                    "🗑️ <b>កំណត់ត្រាត្រូវបានលុប!</b> អាហារនេះត្រូវបានលុបចេញពីកំណត់ត្រាថ្ងៃនេះរបស់អ្នក។"
+                    "🗑️ <b>Log Deleted!</b> This food has been removed from today's logs."
                 )
                 await bot.edit_message(chat_id, message_id, cleared_card, reply_markup={"inline_keyboard": []})
             except Exception as delete_err:
                 print(f"Error deleting meal: {delete_err}")
-                await bot.answer_callback_query(callback_id, "⚠️ បរាជ័យក្នុងការលុបកំណត់ត្រាអាហារ។", show_alert=True)
+                await bot.answer_callback_query(callback_id, "⚠️ Failed to delete meal log.", show_alert=True)
             return
 
         # 2. Handle Reset all of today's stats
         elif callback_data == "reset_today":
             try:
                 db_delete_today_meals(user_id)
-                await bot.answer_callback_query(callback_id, "🗑️ បានសម្អាតកំណត់ត្រាថ្ងៃនេះរួចរាល់!")
+                await bot.answer_callback_query(callback_id, "🗑️ Cleared today's logs successfully!")
                 
                 goal = db_get_user_goal(user_id)
                 cleared_stats_text = (
-                    "📊 <b>របាយការណ៍សង្ខេបប្រចាំថ្ងៃ (UTC)</b>\n"
+                    "📊 <b>Daily Summary Report (UTC)</b>\n"
                     "━━━━━━━━━━━━━━━━━━━━\n"
-                    f"🎯 <b>គោលដៅប្រចាំថ្ងៃ៖</b> <b>{goal} Cal</b>\n"
-                    f"🔥 <b>បានញ៉ាំសរុប៖</b> <b>0 Cal</b>\n"
-                    f"⚖️ <b>ស្ថានភាព៖</b> នៅសល់ <b>{goal} Cal</b>\n"
+                    f"🎯 <b>Daily Goal:</b> <b>{goal} Cal</b>\n"
+                    f"🔥 <b>Total Consumed:</b> <b>0 Cal</b>\n"
+                    f"⚖️ <b>Status:</b> Remaining <b>{goal} Cal</b>\n"
                     "━━━━━━━━━━━━━━━━━━━━\n"
-                    "<b>សារធាតុចិញ្ចឹមសរុប៖</b>\n"
-                    "🥩 <b>ប្រូតេអ៊ីន៖</b> <b>0g</b>\n"
-                    "🧈 <b>ខ្លាញ់សរុប៖</b> <b>0g</b>\n"
-                    "🍞 <b>កាបូអ៊ីដ្រាត៖</b> <b>0g</b>\n"
-                    "🍬 <b>ស្ករ៖</b> <b>0g</b>\n"
+                    "<b>Total Nutrients:</b>\n"
+                    "🥩 <b>Protein:</b> <b>0g</b>\n"
+                    "🧈 <b>Total Fat:</b> <b>0g</b>\n"
+                    "🍞 <b>Carbohydrates:</b> <b>0g</b>\n"
+                    "🍬 <b>Sugar:</b> <b>0g</b>\n"
                     "━━━━━━━━━━━━━━━━━━━━\n"
-                    "<b>អាហារដែលបានញ៉ាំថ្ងៃនេះ៖</b>\n"
-                    "មិនទាន់មានអាហារបានកត់ត្រាសម្រាប់ថ្ងៃនេះនៅឡើយទេ។ ផ្ញើរូបថតអាហារដើម្បីចាប់ផ្តើម!"
+                    "<b>Meals Eaten Today:</b>\n"
+                    "No meals logged for today yet. Send a food photo to start!"
                 )
                 await bot.edit_message(chat_id, message_id, cleared_stats_text, reply_markup={"inline_keyboard": []})
             except Exception as reset_err:
                 print(f"Error resetting daily logs: {reset_err}")
-                await bot.answer_callback_query(callback_id, "⚠️ បរាជ័យក្នុងការសម្អាតកំណត់ត្រាថ្ងៃនេះ។", show_alert=True)
+                await bot.answer_callback_query(callback_id, "⚠️ Failed to clear today's logs.", show_alert=True)
             return
 
         # 3. Handle Delete specific reminder
@@ -1260,7 +1260,7 @@ async def handle_telegram_update(payload: dict):
             reminder_time = callback_data.split(":")[1]
             try:
                 db_delete_reminder(user_id, reminder_time)
-                await bot.answer_callback_query(callback_id, f"⏰ បានលុបម៉ោងរំលឹក {reminder_time}!")
+                await bot.answer_callback_query(callback_id, f"⏰ Deleted reminder time {reminder_time}!")
                 
                 # Fetch updated reminders list
                 reminders = db_get_reminders(user_id)
@@ -1271,41 +1271,41 @@ async def handle_telegram_update(payload: dict):
                 
                 if not reminders:
                     reminder_text = (
-                        "🔔 <b>កំណត់ម៉ោងរំលឹកកត់ត្រាអាហារ</b>\n"
+                        "🔔 <b>Set Meal Logging Reminder</b>\n"
                         "━━━━━━━━━━━━━━━━━━━━\n"
-                        f"📅 <b>ថ្ងៃនេះ៖</b> <b>{today_date_str}</b>\n"
+                        f"📅 <b>Today:</b> <b>{today_date_str}</b>\n"
                         "━━━━━━━━━━━━━━━━━━━━\n"
-                        "អ្នកមិនទាន់មានម៉ោងរំលឹកនៅឡើយទេ។\n\n"
-                        "💡 <b>របៀបកំណត់ម៉ោងរំលឹក (ម៉ោងនៅកម្ពុជា)៖</b>\n"
-                        "• វាយ <b>/reminder 08:00</b> — ដើម្បីរំលឹកម៉ោង ៨:០០ ព្រឹក\n\n"
-                        "<b>ចំណាំ៖</b> ម៉ោងរំលឹកនឹងត្រូវបង្គត់ទៅរៀងរាល់ ១០នាទីម្តង។"
+                        "You don't have any reminders set yet.\n\n"
+                        "💡 <b>How to set a reminder:</b>\n"
+                        "• Type <b>/reminder 08:00</b> — to remind at 8:00 AM\n\n"
+                        "<b>Note:</b> Reminders will be rounded to the nearest 10 minutes."
                     )
                     await bot.edit_message(chat_id, message_id, reminder_text, reply_markup={"inline_keyboard": []})
                 else:
                     reminder_text = (
-                        "🔔 <b>ម៉ោងរំលឹកបច្ចុប្បន្នរបស់អ្នក (ម៉ោងនៅកម្ពុជា)៖</b>\n"
+                        "🔔 <b>Your Current Reminders:</b>\n"
                         "━━━━━━━━━━━━━━━━━━━━\n"
-                        f"📅 <b>ថ្ងៃនេះ៖</b> <b>{today_date_str}</b>\n"
+                        f"📅 <b>Today:</b> <b>{today_date_str}</b>\n"
                         "━━━━━━━━━━━━━━━━━━━━\n"
                     )
                     inline_keyboard = []
                     for idx, r_time in enumerate(reminders, start=1):
-                        reminder_text += f"{idx}. ⏰ ម៉ោង <b>{r_time}</b>\n"
+                        reminder_text += f"{idx}. ⏰ Time <b>{r_time}</b>\n"
                         inline_keyboard.append([
                             {
-                                "text": f"🗑️ លុបម៉ោង {r_time}",
+                                "text": f"🗑️ Delete {r_time}",
                                 "callback_data": f"delete_reminder:{r_time}"
                             }
                         ])
                     reminder_text += (
-                        "\n💡 <b>គន្លឹះ៖</b>\n"
-                        "• ដើម្បីបន្ថែមម៉ោងរំលឹកថ្មី៖ <b>/reminder 08:00</b>\n"
-                        "• ដើម្បីលុបទាំងអស់៖ <b>/reminder clear</b>"
+                        "\n💡 <b>Tips:</b>\n"
+                        "• To add a new reminder: <b>/reminder 08:00</b>\n"
+                        "• To clear all reminders: <b>/reminder clear</b>"
                     )
                     await bot.edit_message(chat_id, message_id, reminder_text, reply_markup={"inline_keyboard": inline_keyboard})
             except Exception as delete_err:
                 print(f"Error deleting reminder: {delete_err}")
-                await bot.answer_callback_query(callback_id, "⚠️ បរាជ័យក្នុងការលុបម៉ោងរំលឹក។", show_alert=True)
+                await bot.answer_callback_query(callback_id, "⚠️ Failed to delete reminder.", show_alert=True)
             return
 
         # Handle TDEE Gender callback
@@ -1313,20 +1313,20 @@ async def handle_telegram_update(payload: dict):
             gender = callback_data.split(":")[1]
             try:
                 db_set_tdee_step(user_id, step="age", gender=gender)
-                await bot.answer_callback_query(callback_id, "ភេទត្រូវបានរក្សាទុក!")
+                await bot.answer_callback_query(callback_id, "Gender saved!")
                 
-                gender_display = "👨 ប្រុស (Male)" if gender == "male" else "👩 ស្រី (Female)"
+                gender_display = "👨 Male" if gender == "male" else "👩 Female"
                 await bot.edit_message(
                     chat_id,
                     message_id,
-                    "🧬 <b>គណនា BMR & TDEE (ជំហានទី ២/៥)</b>\n"
+                    "🧬 <b>Calculate BMR & TDEE (Step 2/5)</b>\n"
                     "━━━━━━━━━━━━━━━━━━━━\n"
-                    f"👤 ភេទ៖ <b>{gender_display}</b>\n\n"
-                    "🎂 សូមវាយបញ្ចូល <b>អាយុ</b> របស់អ្នក (គិតជាឆ្នាំ)៖"
+                    f"👤 Gender: <b>{gender_display}</b>\n\n"
+                    "🎂 Please enter your <b>Age</b> (in years):"
                 )
             except Exception as err:
                 print(f"Error saving gender: {err}")
-                await bot.answer_callback_query(callback_id, "⚠️ កំហុសបច្ចេកទេស។", show_alert=True)
+                await bot.answer_callback_query(callback_id, "⚠️ Technical error.", show_alert=True)
             return
 
         # Handle TDEE Activity callback
@@ -1335,7 +1335,7 @@ async def handle_telegram_update(payload: dict):
             try:
                 state = db_get_tdee_state(user_id)
                 if not state or not state["gender"] or state["age"] is None or state["height"] is None or state["weight"] is None:
-                    await bot.answer_callback_query(callback_id, "⚠️ រកមិនឃើញទិន្នន័យចាស់! សូមចាប់ផ្តើមម្តងទៀត។", show_alert=True)
+                    await bot.answer_callback_query(callback_id, "⚠️ No previous session found! Please start again.", show_alert=True)
                     db_clear_tdee_state(user_id)
                     return
                     
@@ -1378,60 +1378,60 @@ async def handle_telegram_update(payload: dict):
                 loss_pct = (loss / maintain) * 100
                 extreme_pct = (extreme / maintain) * 100
                 
-                gender_kh = "ប្រុស (Male)" if gender == "male" else "ស្រី (Female)"
+                gender_kh = "Male" if gender == "male" else "Female"
                 activity_kh = {
-                    "sedentary": "Sedentary (អង្គុយច្រើន/គ្មានលំហាត់ប្រាណ)",
-                    "light": "Light (ហាត់ប្រាណ ១-៣ ថ្ងៃ/សប្តាហ៍)",
-                    "moderate": "Moderate (ហាត់ប្រាណ ៤-៥ ថ្ងៃ/សប្តាហ៍)",
-                    "active": "Active (ហាត់ប្រាណរាល់ថ្ងៃ/ខ្លាំង)",
-                    "very_active": "Very Active (ហាត់ប្រាណខ្លាំងខ្លាំង)"
+                    "sedentary": "Sedentary (Little to no exercise)",
+                    "light": "Light (Exercise 1-3 days/week)",
+                    "moderate": "Moderate (Exercise 4-5 days/week)",
+                    "active": "Active (Exercise daily/heavy)",
+                    "very_active": "Very Active (Very heavy exercise)"
                 }.get(activity, activity)
                 
                 db_save_user_profile(user_id, gender, age, height, weight, activity)
                 db_clear_tdee_state(user_id)
-                await bot.answer_callback_query(callback_id, "គណនារួចរាល់!")
+                await bot.answer_callback_query(callback_id, "Calculation completed!")
                 
                 result_card = (
-                    "📊 <b>លទ្ធផលគណនា BMR & TDEE</b>\n"
+                    "📊 <b>BMR & TDEE Results</b>\n"
                     "━━━━━━━━━━━━━━━━━━━━\n"
-                    "👤 <b>ព័ត៌មានរូបរាងកាយ៖</b>\n"
-                    f"• ភេទ៖ <b>{gender_kh}</b>\n"
-                    f"• អាយុ៖ <b>{age} ឆ្នាំ</b>\n"
-                    f"• កម្ពស់៖ <b>{height:.1f} cm</b>\n"
-                    f"• ទម្ងន់៖ <b>{weight:.1f} kg</b>\n"
-                    f"• កម្រិតសកម្មភាព៖ <b>{activity_kh}</b>\n"
+                    "👤 <b>Physical Profile:</b>\n"
+                    f"• Gender: <b>{gender_kh}</b>\n"
+                    f"• Age: <b>{age} years old</b>\n"
+                    f"• Height: <b>{height:.1f} cm</b>\n"
+                    f"• Weight: <b>{weight:.1f} kg</b>\n"
+                    f"• Activity Level: <b>{activity_kh}</b>\n"
                     "━━━━━━━━━━━━━━━━━━━━\n"
-                    f"🔥 <b>BMR (អត្រាមេតាបូលីសបាត)៖</b> <b>{bmr:.0f} Cal</b>\n"
-                    f"⚡ <b>TDEE (រក្សាទម្ងន់)៖</b> <b>{maintain:.0f} Cal</b>\n"
+                    f"🔥 <b>BMR (Basal Metabolic Rate):</b> <b>{bmr:.0f} Cal</b>\n"
+                    f"⚡ <b>TDEE (Maintenance):</b> <b>{maintain:.0f} Cal</b>\n"
                     "━━━━━━━━━━━━━━━━━━━━\n"
-                    "🎯 <b>ជ្រើសរើសគោលដៅកាឡូរីប្រចាំថ្ងៃ៖</b>\n"
-                    f"⚖️ <b>Maintain</b> (100%)៖ <b>{maintain:.0f} Cal</b>\n"
-                    f"📉 <b>Mild Loss</b> ({mild_pct:.0f}%)៖ <b>{mild:.0f} Cal</b> (-250)\n"
-                    f"🔥 <b>Weight Loss</b> ({loss_pct:.0f}%)៖ <b>{loss:.0f} Cal</b> (-500)\n"
-                    f"🚨 <b>Extreme Loss</b> ({extreme_pct:.0f}%)៖ <b>{extreme:.0f} Cal</b> (-1000)\n"
+                    "🎯 <b>Select Daily Calorie Goal:</b>\n"
+                    f"⚖️ <b>Maintain</b> (100%): <b>{maintain:.0f} Cal</b>\n"
+                    f"📉 <b>Mild Loss</b> ({mild_pct:.0f}%): <b>{mild:.0f} Cal</b> (-250)\n"
+                    f"🔥 <b>Weight Loss</b> ({loss_pct:.0f}%): <b>{loss:.0f} Cal</b> (-500)\n"
+                    f"🚨 <b>Extreme Loss</b> ({extreme_pct:.0f}%): <b>{extreme:.0f} Cal</b> (-1000)\n"
                     "━━━━━━━━━━━━━━━━━━━━\n"
-                    "សូមចុចប៊ូតុងខាងក្រោមដើម្បីកំណត់គោលដៅកាឡូរីប្រចាំថ្ងៃដោយស្វ័យប្រវត្ត៖"
+                    "Please click a button below to automatically set your calorie goal:"
                 )
                 
                 inline_keyboard = [
                     [
-                        {"text": f"⚖️ រក្សាទម្ងន់ ({maintain:.0f} Cal)", "callback_data": f"setgoal:maintain:{int(maintain)}"}
+                        {"text": f"⚖️ Maintain Weight ({maintain:.0f} Cal)", "callback_data": f"setgoal:maintain:{int(maintain)}"}
                     ],
                     [
-                        {"text": f"📉 ស្រកតិចតួច ({mild:.0f} Cal)", "callback_data": f"setgoal:mild:{int(mild)}"}
+                        {"text": f"📉 Mild Loss ({mild:.0f} Cal)", "callback_data": f"setgoal:mild:{int(mild)}"}
                     ],
                     [
-                        {"text": f"🔥 សម្រកទម្ងន់ ({loss:.0f} Cal)", "callback_data": f"setgoal:loss:{int(loss)}"}
+                        {"text": f"🔥 Weight Loss ({loss:.0f} Cal)", "callback_data": f"setgoal:loss:{int(loss)}"}
                     ],
                     [
-                        {"text": f"🚨 សម្រកខ្លាំង ({extreme:.0f} Cal)", "callback_data": f"setgoal:extreme:{int(extreme)}"}
+                        {"text": f"🚨 Extreme Loss ({extreme:.0f} Cal)", "callback_data": f"setgoal:extreme:{int(extreme)}"}
                     ]
                 ]
                 
                 await bot.edit_message(chat_id, message_id, result_card, reply_markup={"inline_keyboard": inline_keyboard})
             except Exception as err:
                 print(f"Error calculating TDEE: {err}")
-                await bot.answer_callback_query(callback_id, "⚠️ បញ្ហាក្នុងពេលគណនា។", show_alert=True)
+                await bot.answer_callback_query(callback_id, "⚠️ Error during calculation.", show_alert=True)
             return
 
         # Handle Goal click callback
@@ -1445,40 +1445,40 @@ async def handle_telegram_update(payload: dict):
                 await bot.answer_callback_query(callback_id, "🎯 Goal Saved!")
                 
                 goal_type_kh = {
-                    "maintain": "Maintain (រក្សាទម្ងន់)",
-                    "mild": "Mild Loss (ស្រកតិចតួច)",
-                    "loss": "Weight Loss (សម្រកទម្ងន់)",
-                    "extreme": "Extreme Loss (សម្រកខ្លាំង)"
+                    "maintain": "Maintain (Maintain Weight)",
+                    "mild": "Mild Loss (Mild Weight Loss)",
+                    "loss": "Weight Loss (Weight Loss)",
+                    "extreme": "Extreme Loss (Extreme Weight Loss)"
                 }.get(goal_type, goal_type)
                 
                 confirmation_text = (
                     "✅ <b>Goal Saved Successfully!</b>\n"
                     "━━━━━━━━━━━━━━━━━━━━\n"
-                    "គោលដៅកាឡូរីប្រចាំថ្ងៃថ្មីរបស់អ្នកត្រូវបានកំណត់ទៅ៖\n"
-                    f"• <b>ប្រភេទគោលដៅ៖</b> <b>{goal_type_kh}</b>\n"
-                    f"• <b>ថាមពលប្រចាំថ្ងៃ៖</b> <b>{calories} Cal</b>\n"
+                    "Your new daily calorie goal has been set to:\n"
+                    f"• <b>Goal Type:</b> <b>{goal_type_kh}</b>\n"
+                    f"• <b>Daily Calorie Goal:</b> <b>{calories} Cal</b>\n"
                     "━━━━━━━━━━━━━━━━━━━━\n"
-                    "🎉 <b>ប្រព័ន្ធត្រូវបានធ្វើបច្ចុប្បន្នភាពរួចរាល់!</b>"
+                    "🎉 <b>System updated successfully!</b>"
                 )
                 await bot.edit_message(chat_id, message_id, confirmation_text, reply_markup={"inline_keyboard": []})
             except Exception as save_err:
                 print(f"Error saving goal: {save_err}")
-                await bot.answer_callback_query(callback_id, "⚠️ បរាជ័យក្នុងការរក្សាទុកគោលដៅ。", show_alert=True)
+                await bot.answer_callback_query(callback_id, "⚠️ Failed to save goal.", show_alert=True)
             return
 
         # 4. Handle Suggest Food preference click callback
         elif callback_data.startswith("suggest_pref:"):
             pref_type = callback_data.split(":")[1]
             pref_names_kh = {
-                "veg": "បន្លែច្រើន (High Veg)",
-                "meat": "សាច់ច្រើន (High Meat)",
-                "normal": "ម្ហូបធម្មតា (Standard Khmer)"
+                "veg": "High Veg",
+                "meat": "High Meat",
+                "normal": "Standard Balanced"
             }
-            pref_kh = pref_names_kh.get(pref_type, "ម្ហូបធម្មតា")
+            pref_kh = pref_names_kh.get(pref_type, "Standard Balanced")
             
             try:
                 # Answer callback immediately to halt spinners
-                await bot.answer_callback_query(callback_id, f"រៀបចំមុខម្ហូប: {pref_kh}")
+                await bot.answer_callback_query(callback_id, f"Preparing meal plan: {pref_kh}")
                 
                 # Fetch profile and goals
                 profile = db_get_user_profile(user_id)
@@ -1488,7 +1488,7 @@ async def handle_telegram_update(payload: dict):
                 await bot.edit_message(
                     chat_id,
                     message_id,
-                    f"💡 <i>កំពុងរៀបចំសំណើមុខម្ហូបប្រចាំថ្ងៃ [{pref_kh}] ដែលសមស្របនឹងគោលដៅ {goal} Cal របស់អ្នក... សូមរង់ចាំមួយភ្លែត។</i>",
+                    f"💡 <i>Preparing a daily [{pref_kh}] meal suggestion matching your goal of {goal} Cal... Please wait.</i>",
                     reply_markup={"inline_keyboard": []}
                 )
                 
@@ -1516,46 +1516,46 @@ async def handle_telegram_update(payload: dict):
                 # Dynamic prompt based on selected preference
                 if pref_type == "veg":
                     pref_instructions = (
-                        "The user requested: 🥗 បន្លែច្រើន (High Veg / Low Carb).\n"
-                        "Your suggestions MUST be extremely high in volume of local vegetables and salads (e.g. boiled/steamed greens like ត្រកួន, ស្ពៃ, ស្ពៃក្តោប, ត្រសក់) and very low in carbohydrates. Minimize large portions of white rice, sweet sauces, or noodles. Ensure it maximizes fullness on their calorie limit."
+                        "The user requested: 🥗 High Veg / Low Carb.\n"
+                        "Your suggestions MUST be extremely high in volume of local vegetables and salads (e.g. boiled/steamed greens like morning glory, mustard greens, cabbage, cucumber) and very low in carbohydrates. Minimize large portions of white rice, sweet sauces, or noodles. Ensure it maximizes fullness on their calorie limit."
                     )
                 elif pref_type == "meat":
                     pref_instructions = (
-                        "The user requested: 🥩 សាច់ច្រើន (High Protein).\n"
+                        "The user requested: 🥩 High Protein.\n"
                         "Your suggestions MUST focus heavily on high-protein sources and lean local proteins (e.g. skinless chicken breast, local grilled/steamed fish, boiled eggs) while keeping carbohydrates low. Minimize high-carb sides."
                     )
                 else:
                     pref_instructions = (
-                        "The user requested: 🍲 ម្ហូបធម្មតា (Standard Balanced Khmer Food).\n"
+                        "The user requested: 🍲 Standard Balanced Food.\n"
                         "Your suggestions should feature standard balanced Cambodian rice and soup/stir-fry dishes (e.g. standard portions of white rice, local soup, local balanced fish/chicken stir-fry)."
                     )
                 
                 SUGGEST_SYSTEM_PROMPT = (
-                    "You are a professional nutrition expert and Cambodian culinary specialist. "
-                    "You must generate an extremely concise 1-day Meal Plan divided into Breakfast (អាហារពេលព្រឹក), Lunch (អាហារពេលថ្ងៃត្រង់), and Dinner (អាហារពេលល្ងាច) tailored specifically to the user's TDEE target calorie budget.\n"
+                    "You are a professional nutrition expert and culinary specialist. "
+                    "You must generate an extremely concise 1-day Meal Plan divided into Breakfast, Lunch, and Dinner tailored specifically to the user's TDEE target calorie budget.\n"
                     "CRITICAL REQUIREMENTS:\n"
-                    "1. YOU MUST RESPOND ENTIRELY IN KHMER LANGUAGE.\n"
-                    "2. STRICTLY NO GREETINGS, NO WELCOME MESSAGES, NO INTRODUCTIONS, and NO USER PROFILE/CONTEXT SUMMARIES. Do not output any hello, profile summary, gender, age, height, weight, or goal type. Start directly with the text 'អាហារពេលព្រឹក (Breakfast)'.\n"
-                    "3. STRICTLY NO notes, NO 'ចំណាំ' (note) paragraphs under individual meals or at the end.\n"
-                    "4. STRICTLY NO additional tips, NO 'គន្លឹះបន្ថែមសម្រាប់សុខភាព', NO health advices, NO 'ការណែនាំបន្ថែម', and NO closing remarks at the end. Stop and end the generation immediately after the dinner meal bullet points.\n"
-                    "5. DO NOT use italic tags (like <i> or <em>) for estimated calories. Use regular bold (<b>) or normal unformatted text instead (e.g. 'កាឡូរីប៉ាន់ស្មាន៖ ~៥០៨ Cal').\n"
+                    "1. YOU MUST RESPOND ENTIRELY IN ENGLISH.\n"
+                    "2. STRICTLY NO GREETINGS, NO WELCOME MESSAGES, NO INTRODUCTIONS, and NO USER PROFILE/CONTEXT SUMMARIES. Do not output any hello, profile summary, gender, age, height, weight, or goal type. Start directly with the text 'Breakfast'.\n"
+                    "3. STRICTLY NO notes, NO 'Note' paragraphs under individual meals or at the end.\n"
+                    "4. STRICTLY NO additional tips, NO health advices, and NO closing remarks at the end. Stop and end the generation immediately after the dinner meal bullet points.\n"
+                    "5. DO NOT use italic tags (like <i> or <em>) for estimated calories. Use regular bold (<b>) or normal unformatted text instead (e.g. 'Estimated calories: ~508 Cal').\n"
                     f"6. Calorie Limit: Ensure the calories for Breakfast + Lunch + Dinner add up approximately to their daily target of {goal} Cal. Clearly state estimated calories (Cal) for each meal.\n"
                     f"7. User Food Preference: {pref_instructions}\n"
-                    "8. Market Accessibility: All proposed meals and ingredients MUST be cheap, typical, and very easy to buy in local Cambodian markets (ផ្សារខ្មែរ). Use local ingredients (e.g. ត្រី, ទ្រូងមាន់, ត្រកួន, ស្ពៃ, ស៊ុត) with simple seasonings (ទឹកត្រី, ទឹកស៊ីអ៊ីវ).\n"
+                    "8. Market Accessibility: All proposed meals and ingredients MUST be cheap, typical, and easy to buy. Use simple ingredients with basic seasonings.\n"
                     "9. Format your response beautifully using standard Telegram HTML tags like <b> and clean section dividers like ━━━━━━━━━━━━━━━━━━━━. DO NOT use markdown code blocks or triple backticks. Keep the layout premium, modern, and highly legible.\n"
                     "Format EXACTLY like this structure and stop immediately after the last bullet point of Dinner:\n"
-                    "អាហារពេលព្រឹក (Breakfast)\n"
-                    "<b>កាឡូរីប៉ាន់ស្មាន៖ ~... Cal</b>\n"
+                    "Breakfast\n"
+                    "<b>Estimated Calories: ~... Cal</b>\n"
                     "• ...\n"
                     "• ...\n"
                     "━━━━━━━━━━━━━━━━━━━━\n"
-                    "អាហារពេលថ្ងៃត្រង់ (Lunch)\n"
-                    "<b>កាឡូរីប៉ាន់ស្មាន៖ ~... Cal</b>\n"
+                    "Lunch\n"
+                    "<b>Estimated Calories: ~... Cal</b>\n"
                     "• ...\n"
                     "• ...\n"
                     "━━━━━━━━━━━━━━━━━━━━\n"
-                    "អាហារពេលល្ងាច (Dinner)\n"
-                    "<b>កាឡូរីប៉ាន់ស្មាន៖ ~... Cal</b>\n"
+                    "Dinner\n"
+                    "<b>Estimated Calories: ~... Cal</b>\n"
                     "• ...\n"
                     "• ..."
                 )
@@ -1587,9 +1587,9 @@ async def handle_telegram_update(payload: dict):
                 suggested_menu = suggested_menu.replace("```html", "").replace("```", "").strip()
                 
                 menu_header = (
-                    f"💡 <b>មុខម្ហូបណែនាំប្រចាំថ្ងៃ ({pref_kh})</b>\n"
+                    f"💡 <b>Daily Meal Suggestions ({pref_kh})</b>\n"
                     "━━━━━━━━━━━━━━━━━━━━\n"
-                    f"🎯 <b>គោលដៅថ្ងៃនេះ៖</b> <b>{goal} Cal</b>\n"
+                    f"🎯 <b>Daily Goal:</b> <b>{goal} Cal</b>\n"
                     "━━━━━━━━━━━━━━━━━━━━\n"
                 )
                 menu_footer = ""
@@ -1602,16 +1602,16 @@ async def handle_telegram_update(payload: dict):
                 err_msg = str(e)
                 if any(x in err_msg for x in ["429", "RESOURCE_EXHAUSTED", "LimitExceeded", "quota"]):
                     fail_msg = (
-                        "⚠️ <b>ការណែនាំមុខម្ហូបបានបរាជ័យ</b>\n"
+                        "⚠️ <b>Meal Suggestion Failed</b>\n"
                         "━━━━━━━━━━━━━━━━━━━━\n"
-                        "មានបញ្ហាបច្ចេកទេសមួយបានកើតឡើងក្នុងពេលរៀបចំមុខម្ហូបណែនាំ។ សូមព្យាយាមម្តងទៀតនៅពេលក្រោយ។"
+                        "A technical error occurred while preparing your meal suggestion. Please try again later."
                     )
                 else:
                     fail_msg = (
-                        "⚠️ <b>ការណែនាំមុខម្ហូបបានបរាជ័យ</b>\n"
+                        "⚠️ <b>Meal Suggestion Failed</b>\n"
                         "━━━━━━━━━━━━━━━━━━━━\n"
-                        "មានបញ្ហាបច្ចេកទេសមួយបានកើតឡើងក្នុងពេលរៀបចំមុខម្ហូបណែនាំ។\n\n"
-                        f"<b>ព័ត៌មានលម្អិត:</b> <code>{err_msg}</code>"
+                        "A technical error occurred while preparing your meal suggestion.\n\n"
+                        f"<b>Details:</b> <code>{err_msg}</code>"
                     )
                 await bot.edit_message(chat_id, message_id, fail_msg)
             return
@@ -1620,16 +1620,16 @@ async def handle_telegram_update(payload: dict):
         elif callback_data == "disconnect_fit":
             try:
                 db_delete_fit_tokens(user_id)
-                await bot.answer_callback_query(callback_id, "🔌 បានផ្តាច់ការភ្ជាប់ Google Fit!")
+                await bot.answer_callback_query(callback_id, "🔌 Disconnected Google Fit!")
                 disconnect_text = (
-                    "🔌 <b>បានផ្តាច់ពី Google Fit រួចរាល់!</b>\n"
+                    "🔌 <b>Disconnected from Google Fit!</b>\n"
                     "━━━━━━━━━━━━━━━━━━━━\n"
-                    "គណនីរបស់អ្នកត្រូវបានផ្តាច់ចេញពី Google Fit ហើយ។ ប្រសិនបើចង់ភ្ជាប់ឡើងវិញ សូមប្រើប្រាស់បញ្ជា <b>/fit</b> ម្តងទៀត។"
+                    "Your account has been disconnected from Google Fit. To reconnect, use the <b>/fit</b> command again."
                 )
                 await bot.edit_message(chat_id, message_id, disconnect_text, reply_markup={"inline_keyboard": []})
             except Exception as disc_err:
                 print(f"Error disconnecting Google Fit: {disc_err}")
-                await bot.answer_callback_query(callback_id, "⚠️ បរាជ័យក្នុងការផ្តាច់ពី Google Fit។", show_alert=True)
+                await bot.answer_callback_query(callback_id, "⚠️ Failed to disconnect Google Fit.", show_alert=True)
             return
 
 
@@ -1637,16 +1637,16 @@ async def handle_telegram_update(payload: dict):
         elif callback_data == "disconnect_strava":
             try:
                 db_delete_strava_tokens(user_id)
-                await bot.answer_callback_query(callback_id, "🔌 បានផ្តាច់ការភ្ជាប់ Strava!")
+                await bot.answer_callback_query(callback_id, "🔌 Disconnected Strava!")
                 disconnect_text = (
-                    "🔌 <b>បានផ្តាច់ពី Strava រួចរាល់!</b>\n"
+                    "🔌 <b>Disconnected from Strava!</b>\n"
                     "━━━━━━━━━━━━━━━━━━━━\n"
-                    "គណនីរបស់អ្នកត្រូវបានផ្តាច់ចេញពី Strava ហើយ។ ប្រសិនបើចង់ភ្ជាប់ឡើងវិញ សូមប្រើប្រាស់បញ្ជា <b>/strava</b> ម្តងទៀត។"
+                    "Your account has been disconnected from Strava. To reconnect, use the <b>/strava</b> command again."
                 )
                 await bot.edit_message(chat_id, message_id, disconnect_text, reply_markup={"inline_keyboard": []})
             except Exception as disc_err:
                 print(f"Error disconnecting Strava: {disc_err}")
-                await bot.answer_callback_query(callback_id, "⚠️ បរាជ័យក្នុងការផ្តាច់ពី Strava។", show_alert=True)
+                await bot.answer_callback_query(callback_id, "⚠️ Failed to disconnect Strava.", show_alert=True)
             return
     # Process standard text or photo messages
     message = payload.get("message")
@@ -1681,16 +1681,16 @@ async def handle_telegram_update(payload: dict):
             day_before_yesterday_str = (now_cambodia - datetime.timedelta(days=2)).strftime("%Y-%m-%d")
             
             if custom_date == today_str:
-                display_date = "ថ្ងៃនេះ"
+                display_date = "Today"
             elif custom_date == yesterday_str:
-                display_date = "ម្សិលមិញ"
+                display_date = "Yesterday"
             elif custom_date == day_before_yesterday_str:
-                display_date = "ម្សិលម្ងៃ"
+                display_date = "Day before yesterday"
             elif custom_date:
                 date_parts = custom_date.split('-')
                 display_date = f"{date_parts[2]}-{date_parts[1]}-{date_parts[0]}"
             else:
-                display_date = "ថ្ងៃនេះ"
+                display_date = "Today"
                 
             if step == "calories":
                 try:
@@ -1700,18 +1700,18 @@ async def handle_telegram_update(payload: dict):
                     db_set_manual_log_step(user_id, step="protein", calories=val)
                     await bot.send_message(
                         chat_id,
-                        f"📝 <b>កត់ត្រាអាហារ៖ {food_name}</b> ({display_date})\n"
+                        f"📝 <b>Log Food: {food_name}</b> ({display_date})\n"
                         f"━━━━━━━━━━━━━━━━━━━━\n"
-                        f"🥩 សូមវាយបញ្ចូល ឬជ្រើសរើសបរិមាណ <b>ប្រូតេអ៊ីន (Protein)</b> ជាក្រាម (g)៖\n\n"
-                        f"<i>(សូមវាយបញ្ចូលជាលេខ ជ្រើសរើសប៊ូតុងខាងក្រោម ឬផ្ញើ /cancel ដើម្បីបោះបង់)</i>",
+                        f"🥩 Please enter or select amount of <b>Protein (Protein)</b> in grams (g):\n\n"
+                        f"<i>(Please enter a number, select a button below, or send /cancel to abort)</i>",
                         reply_markup=get_macro_keyboard()
                     )
                 except ValueError:
                     await bot.send_message(
                         chat_id,
-                        f"⚠️ <b>កាឡូរីមិនត្រឹមត្រូវទេ!</b>\n"
-                        f"សូមវាយបញ្ចូលចំនួនកាឡូរីជាលេខរាប់ពី ០ ឡើងទៅ។ ឧទាហរណ៍៖ <b>150</b>\n\n"
-                        f"<i>(ឬផ្ញើ /cancel ដើម្បីបោះបង់)</i>"
+                        f"⚠️ <b>Invalid Calories!</b>\n"
+                        f"Please enter a calorie number greater than or equal to 0. Example: <b>150</b>\n\n"
+                        f"<i>(Or send /cancel to abort)</i>"
                     )
                 return
                 
@@ -1723,20 +1723,20 @@ async def handle_telegram_update(payload: dict):
                     db_set_manual_log_step(user_id, step="carbs", protein=val)
                     await bot.send_message(
                         chat_id,
-                        f"📝 <b>កត់ត្រាអាហារ៖ {food_name}</b> ({display_date})\n"
+                        f"📝 <b>Log Food: {food_name}</b> ({display_date})\n"
                         f"━━━━━━━━━━━━━━━━━━━━\n"
-                        f"🥩 ប្រូតេអ៊ីន៖ <b>{val}g</b>\n"
+                        f"🥩 Protein: <b>{val}g</b>\n"
                         f"━━━━━━━━━━━━━━━━━━━━\n"
-                        f"🍞 សូមវាយបញ្ចូល ឬជ្រើសរើសបរិមាណ <b>កាបូអ៊ីដ្រាត (Carbs)</b> ជាក្រាម (g)៖\n\n"
-                        f"<i>(សូមវាយបញ្ចូលជាលេខ ជ្រើសរើសប៊ូតុងខាងក្រោម ឬផ្ញើ /cancel ដើម្បីបោះបង់)</i>",
+                        f"🍞 Please enter or select amount of <b>Carbohydrates (Carbs)</b> in grams (g):\n\n"
+                        f"<i>(Please enter a number, select a button below, or send /cancel to abort)</i>",
                         reply_markup=get_macro_keyboard()
                     )
                 except ValueError:
                     await bot.send_message(
                         chat_id,
-                        f"⚠️ <b>ប្រូតេអ៊ីនមិនត្រឹមត្រូវទេ!</b>\n"
-                        f"សូមវាយបញ្ចូលចំនួនប្រូតេអ៊ីនជាលេខ (ក្រាម) ឬជ្រើសរើសប៊ូតុងខាងក្រោម។ ឧទាហរណ៍៖ <b>15</b>\n\n"
-                        f"<i>(ឬផ្ញើ /cancel ដើម្បីបោះបង់)</i>",
+                        f"⚠️ <b>Invalid Protein!</b>\n"
+                        f"Please enter protein in grams or select a button below. Example: <b>15</b>\n\n"
+                        f"<i>(Or send /cancel to abort)</i>",
                         reply_markup=get_macro_keyboard()
                     )
                 return
@@ -1749,21 +1749,21 @@ async def handle_telegram_update(payload: dict):
                     db_set_manual_log_step(user_id, step="fat", carbs=val)
                     await bot.send_message(
                         chat_id,
-                        f"📝 <b>កត់ត្រាអាហារ៖ {food_name}</b> ({display_date})\n"
+                        f"📝 <b>Log Food: {food_name}</b> ({display_date})\n"
                         f"━━━━━━━━━━━━━━━━━━━━\n"
-                        f"🥩 ប្រូតេអ៊ីន៖ <b>{manual_log_state['protein']}g</b>\n"
-                        f"🍞 កាបូអ៊ីដ្រាត៖ <b>{val}g</b>\n"
+                        f"🥩 Protein: <b>{manual_log_state['protein']}g</b>\n"
+                        f"🍞 Carbs: <b>{val}g</b>\n"
                         f"━━━━━━━━━━━━━━━━━━━━\n"
-                        f"🧈 សូមវាយបញ្ចូល ឬជ្រើសរើសបរិមាណ <b>ខ្លាញ់សរុប (Fat)</b> ជាក្រាម (g)៖\n\n"
-                        f"<i>(សូមវាយបញ្ចូលជាលេខ ជ្រើសរើសប៊ូតុងខាងក្រោម ឬផ្ញើ /cancel ដើម្បីបោះបង់)</i>",
+                        f"🧈 Please enter or select amount of <b>Total Fat (Fat)</b> in grams (g):\n\n"
+                        f"<i>(Please enter a number, select a button below, or send /cancel to abort)</i>",
                         reply_markup=get_macro_keyboard()
                     )
                 except ValueError:
                     await bot.send_message(
                         chat_id,
-                        f"⚠️ <b>កាបូអ៊ីដ្រាតមិនត្រឹមត្រូវទេ!</b>\n"
-                        f"សូមវាយបញ្ចូលចំនួនកាបូអ៊ីដ្រាតជាលេខ (ក្រាម) ឬជ្រើសរើសប៊ូតុងខាងក្រោម។ ឧទាហរណ៍៖ <b>30</b>\n\n"
-                        f"<i>(ឬផ្ញើ /cancel ដើម្បីបោះបង់)</i>",
+                        f"⚠️ <b>Invalid Carbohydrates!</b>\n"
+                        f"Please enter carbs in grams or select a button below. Example: <b>30</b>\n\n"
+                        f"<i>(Or send /cancel to abort)</i>",
                         reply_markup=get_macro_keyboard()
                     )
                 return
@@ -1776,22 +1776,22 @@ async def handle_telegram_update(payload: dict):
                     db_set_manual_log_step(user_id, step="sugar", fat=val)
                     await bot.send_message(
                         chat_id,
-                        f"📝 <b>កត់ត្រាអាហារ៖ {food_name}</b> ({display_date})\n"
+                        f"📝 <b>Log Food: {food_name}</b> ({display_date})\n"
                         f"━━━━━━━━━━━━━━━━━━━━\n"
-                        f"🥩 ប្រូតេអ៊ីន៖ <b>{manual_log_state['protein']}g</b>\n"
-                        f"🍞 កាបូអ៊ីដ្រាត៖ <b>{manual_log_state['carbs']}g</b>\n"
-                        f"🧈 ខ្លាញ់៖ <b>{val}g</b>\n"
+                        f"🥩 Protein: <b>{manual_log_state['protein']}g</b>\n"
+                        f"🍞 Carbs: <b>{manual_log_state['carbs']}g</b>\n"
+                        f"🧈 Fat: <b>{val}g</b>\n"
                         f"━━━━━━━━━━━━━━━━━━━━\n"
-                        f"🍬 សូមវាយបញ្ចូល ឬជ្រើសរើសបរិមាណ <b>ជាតិស្ករ (Sugar)</b> ជាក្រាម (g)៖\n\n"
-                        f"<i>(សូមវាយបញ្ចូលជាលេខ ជ្រើសរើសប៊ូតុងខាងក្រោម ឬផ្ញើ /cancel ដើម្បីបោះបង់)</i>",
+                        f"🍬 Please enter or select amount of <b>Sugar (Sugar)</b> in grams (g):\n\n"
+                        f"<i>(Please enter a number, select a button below, or send /cancel to abort)</i>",
                         reply_markup=get_macro_keyboard()
                     )
                 except ValueError:
                     await bot.send_message(
                         chat_id,
-                        f"⚠️ <b>ខ្លាញ់សរុបមិនត្រឹមត្រូវទេ!</b>\n"
-                        f"សូមវាយបញ្ចូលចំនួនខ្លាញ់សរុបជាលេខ (ក្រាម) ឬជ្រើសរើសប៊ូតុងខាងក្រោម។ ឧទាហរណ៍៖ <b>10</b>\n\n"
-                        f"<i>(ឬផ្ញើ /cancel ដើម្បីបោះបង់)</i>",
+                        f"⚠️ <b>Invalid Total Fat!</b>\n"
+                        f"Please enter fat in grams or select a button below. Example: <b>10</b>\n\n"
+                        f"<i>(Or send /cancel to abort)</i>",
                         reply_markup=get_macro_keyboard()
                     )
                 return
@@ -1805,9 +1805,9 @@ async def handle_telegram_update(payload: dict):
                 except ValueError:
                     await bot.send_message(
                         chat_id,
-                        f"⚠️ <b>ជាតិស្ករមិនត្រឹមត្រូវទេ!</b>\n"
-                        f"សូមវាយបញ្ចូលចំនួនជាតិស្ករជាលេខ (ក្រាម) ឬជ្រើសរើសប៊ូតុងខាងក្រោម។ ឧទាហរណ៍៖ <b>5</b>\n\n"
-                        f"<i>(ឬផ្ញើ /cancel ដើម្បីបោះបង់)</i>",
+                        f"⚠️ <b>Invalid Sugar!</b>\n"
+                        f"Please enter sugar in grams or select a button below. Example: <b>5</b>\n\n"
+                        f"<i>(Or send /cancel to abort)</i>",
                         reply_markup=get_macro_keyboard()
                     )
                 return
@@ -1827,16 +1827,16 @@ async def handle_telegram_update(payload: dict):
                     db_set_tdee_step(user_id, step="height", age=age)
                     await bot.send_message(
                         chat_id,
-                        "🧬 <b>គណនា BMR & TDEE (ជំហានទី ៣/៥)</b>\n"
+                        "🧬 <b>Calculate BMR & TDEE (Step 3/5)</b>\n"
                         "━━━━━━━━━━━━━━━━━━━━\n"
-                        f"🎯 អាយុ៖ <b>{age} ឆ្នាំ</b>\n\n"
-                        "📐 សូមវាយបញ្ចូល <b>កម្ពស់</b> របស់អ្នក (គិតជាសង់ទីម៉ែត្រ cm)៖"
+                        f"🎯 Age: <b>{age} years old</b>\n\n"
+                        "📐 Please enter your <b>Height</b> (in centimeters, cm):"
                     )
                 except ValueError:
                     await bot.send_message(
                         chat_id,
-                        "⚠️ <b>អាយុមិនត្រឹមត្រូវទេ!</b>\n"
-                        "សូមវាយបញ្ចូលអាយុជាលេខរាប់ពី ១ ដល់ ១២០។ ឧទាហរណ៍៖ <b>25</b>"
+                        "⚠️ <b>Invalid Age!</b>\n"
+                        "Please enter age as a number from 1 to 120. Example: <b>25</b>"
                     )
                 return
                 
@@ -1849,17 +1849,17 @@ async def handle_telegram_update(payload: dict):
                     db_set_tdee_step(user_id, step="weight", height=height)
                     await bot.send_message(
                         chat_id,
-                        "🧬 <b>គណនា BMR & TDEE (ជំហានទី ៤/៥)</b>\n"
+                        "🧬 <b>Calculate BMR & TDEE (Step 4/5)</b>\n"
                         "━━━━━━━━━━━━━━━━━━━━\n"
-                        f"🎯 អាយុ៖ <b>{tdee_state['age']} ឆ្នាំ</b>\n"
-                        f"📐 កម្ពស់៖ <b>{height:.1f} cm</b>\n\n"
-                        "⚖️ សូមវាយបញ្ចូល <b>ទម្ងន់</b> របស់អ្នក (គិតជាគីឡូក្រាម kg)៖"
+                        f"🎯 Age: <b>{tdee_state['age']} years old</b>\n"
+                        f"📐 Height: <b>{height:.1f} cm</b>\n\n"
+                        "⚖️ Please enter your <b>Weight</b> (in kilograms, kg):"
                     )
                 except ValueError:
                     await bot.send_message(
                         chat_id,
-                        "⚠️ <b>កម្ពស់មិនត្រឹមត្រូវទេ!</b>\n"
-                        "សូមវាយបញ្ចូលកម្ពស់ជាលេខគិតជាសង់ទីម៉ែត្រ (cm)។ ឧទាហរណ៍៖ <b>170</b>"
+                        "⚠️ <b>Invalid Height!</b>\n"
+                        "Please enter height as a number in centimeters (cm). Example: <b>170</b>"
                     )
                 return
                 
@@ -1873,63 +1873,63 @@ async def handle_telegram_update(payload: dict):
                     
                     inline_keyboard = [
                         [
-                            {"text": "🛋️ Sedentary (កម្រហាត់ប្រាណ)", "callback_data": "tdee_activity:sedentary"}
+                            {"text": "🛋️ Sedentary (Little to no exercise)", "callback_data": "tdee_activity:sedentary"}
                         ],
                         [
-                            {"text": "🚶 Light (ហាត់ប្រាណ ១-៣ ថ្ងៃ/សប្តាហ៍)", "callback_data": "tdee_activity:light"}
+                            {"text": "🚶 Light (Exercise 1-3 days/week)", "callback_data": "tdee_activity:light"}
                         ],
                         [
-                            {"text": "🏃 Moderate (ហាត់ប្រាណ ៤-៥ ថ្ងៃ/សប្តាហ៍)", "callback_data": "tdee_activity:moderate"}
+                            {"text": "🏃 Moderate (Exercise 4-5 days/week)", "callback_data": "tdee_activity:moderate"}
                         ],
                         [
-                            {"text": "🏋️ Active (ហាត់ប្រាណរាល់ថ្ងៃ)", "callback_data": "tdee_activity:active"}
+                            {"text": "🏋️ Active (Exercise daily)", "callback_data": "tdee_activity:active"}
                         ],
                         [
-                            {"text": "🔥 Very Active (ហាត់ប្រាណខ្លាំងខ្លាំង)", "callback_data": "tdee_activity:very_active"}
+                            {"text": "🔥 Very Active (Heavy daily exercise)", "callback_data": "tdee_activity:very_active"}
                         ]
                     ]
                     
                     await bot.send_message(
                         chat_id,
-                        "🧬 <b>គណនា BMR & TDEE (ជំហានទី ៥/៥)</b>\n"
+                        "🧬 <b>Calculate BMR & TDEE (Step 5/5)</b>\n"
                         "━━━━━━━━━━━━━━━━━━━━\n"
-                        f"🎯 អាយុ៖ <b>{tdee_state['age']} ឆ្នាំ</b>\n"
-                        f"📐 កម្ពស់៖ <b>{tdee_state['height']:.1f} cm</b>\n"
-                        f"⚖️ ទម្ងន់៖ <b>{weight:.1f} kg</b>\n"
+                        f"🎯 Age: <b>{tdee_state['age']} years old</b>\n"
+                        f"📐 Height: <b>{tdee_state['height']:.1f} cm</b>\n"
+                        f"⚖️ Weight: <b>{weight:.1f} kg</b>\n"
                         "━━━━━━━━━━━━━━━━━━━━\n"
-                        "🏃‍♀️ សូមជ្រើសរើស <b>កម្រិតសកម្មភាពរាងកាយ</b> របស់អ្នក៖",
+                        "🏃‍♀️ Please select your <b>Physical Activity Level</b>:",
                         reply_markup={"inline_keyboard": inline_keyboard}
                     )
                 except ValueError:
                     await bot.send_message(
                         chat_id,
-                        "⚠️ <b>ទម្ងន់មិនត្រឹមត្រូវទេ!</b>\n"
-                        "សូមវាយបញ្ចូលទម្ងន់ជាលេខគិតជាគីឡូក្រាម (kg)។ ឧទាហរណ៍៖ <b>65</b>"
+                        "⚠️ <b>Invalid Weight!</b>\n"
+                        "Please enter weight as a number in kilograms (kg). Example: <b>65</b>"
                     )
                 return
 
         # Handle commands
         if text.startswith("/start"):
             welcome_text = (
-                "<b>ស្វាគមន៍មកកាន់ NutriBot</b>\n"
-                "ខ្ញុំជា AI ជំនាញអាហារូបត្ថម្ភរបស់អ្នក。 ផ្ញើរូបភាពអាហារ ឬប្រើពាក្យបញ្ជាខាងក្រោមដើម្បីចាប់ផ្តើម៖\n\n"
-                "<b>ពាក្យបញ្ជាទូទៅ</b>\n"
-                "• <b>ផ្ញើរូបថត</b>៖ វិភាគ និងកត់ត្រាអាហារពីក្នុងរូបភាពដោយស្វ័យប្រវត្ត។\n"
-                "• <b>/log &lt;ឈ្មោះអាហារ និងបរិមាណ&gt;</b>៖ កត់ត្រាអាហារជាអត្ថបទ។\n"
-                "• <b>/burn &lt;កាឡូរី&gt;</b>៖ កត់ត្រាការដុតកាឡូរីពីការហាត់ប្រាណ។\n"
-                "• <b>/nosweet</b>៖ កត់ត្រាការតមភេសជ្ជៈផ្អែមថ្ងៃនេះ។\n"
-                "• <b>/menu</b> (ឬ <b>/suggest</b>)៖ ណែនាំមុខម្ហូបប្រចាំថ្ងៃសមស្របនឹងកាឡូរីរបស់អ្នក។\n\n"
-                "<b>គ្រប់គ្រងគណនី និងគោលដៅ</b>\n"
-                "• <b>/weight &lt;ទម្ងន់&gt;</b>៖ ធ្វើបច្ចុប្បន្នភាពទម្ងន់ និងគណនា TDEE ឡើងវិញ។\n"
-                "• <b>/cal</b>៖ គណនា BMR/TDEE និងកំណត់គោលដៅកាឡូរីស្វ័យប្រវត្ត។\n"
-                "• <b>/goal &lt;កាឡូរី&gt;</b>៖ កំណត់គោលដៅកាឡូរីប្រចាំថ្ងៃ។\n"
-                "• <b>/strava</b>៖ ភ្ជាប់ ឬផ្តាច់គណនីជាមួយ Strava។\n\n"
-                "<b>របាយការណ៍ និងការកំណត់</b>\n"
-                "• <b>/stats</b>៖ មើលរបាយការណ៍អាហារូបត្ថម្ភប្រចាំថ្ងៃ។\n"
-                "• <b>/weekly</b>៖ មើលរបាយការណ៍សង្ខេបប្រចាំសប្តាហ៍។\n"
-                "• <b>/reminder &lt;ម៉ោង&gt;</b>៖ កំណត់ម៉ោងរំលឹកកត់ត្រាអាហារ។\n"
-                "• <b>/start</b>៖ បង្ហាញការណែនាំនេះឡើងវិញ។\n\n"
-                "<b>ចាប់ផ្តើមឥឡូវនេះ៖</b> ផ្ញើរូបថតអាហាររបស់អ្នក ឬវាយបញ្ចូលពាក្យបញ្ជាណាមួយខាងលើ។"
+                "<b>Welcome to NutriBot</b>\n"
+                "I am your AI nutrition expert. Send a food photo or use the commands below to start:\n\n"
+                "<b>General Commands</b>\n"
+                "• <b>Send food photo</b>: Analyze and log meals automatically.\n"
+                "• <b>/log &lt;food name & portion&gt;</b>: Log meal via text description.\n"
+                "• <b>/burn &lt;calories&gt;</b>: Log workout calories burned.\n"
+                "• <b>/nosweet</b>: Log sweet-free challenge status today.\n"
+                "• <b>/menu</b> (or <b>/suggest</b>): Get a daily meal suggestion matching your goal.\n\n"
+                "<b>Account & Goal Management</b>\n"
+                "• <b>/weight &lt;weight&gt;</b>: Update weight and recalculate TDEE.\n"
+                "• <b>/cal</b>: Calculate BMR/TDEE and set calorie goal.\n"
+                "• <b>/goal &lt;calories&gt;</b>: Set daily calorie goal.\n"
+                "• <b>/strava</b>: Connect or disconnect your Strava account.\n\n"
+                "<b>Reports & Settings</b>\n"
+                "• <b>/stats</b>: View daily nutrition report.\n"
+                "• <b>/weekly</b>: View weekly summary report.\n"
+                "• <b>/reminder &lt;time&gt;</b>: Set daily meal logging reminders.\n"
+                "• <b>/start</b>: Show this help guide again.\n\n"
+                "<b>Start Now:</b> Send a photo of your food or type any command above."
             )
             await bot.send_message(chat_id, welcome_text)
             return
@@ -1940,16 +1940,16 @@ async def handle_telegram_update(payload: dict):
             
             inline_keyboard = [
                 [
-                    {"text": "👨 ប្រុស (Male)", "callback_data": "tdee_gender:male"},
-                    {"text": "👩 ស្រី (Female)", "callback_data": "tdee_gender:female"}
+                    {"text": "👨 Male", "callback_data": "tdee_gender:male"},
+                    {"text": "👩 Female", "callback_data": "tdee_gender:female"}
                 ]
             ]
             
             await bot.send_message(
                 chat_id,
-                "🧬 <b>គណនា BMR & TDEE (ជំហានទី ១/៥)</b>\n"
+                "🧬 <b>Calculate BMR & TDEE (Step 1/5)</b>\n"
                 "━━━━━━━━━━━━━━━━━━━━\n"
-                "សូមជ្រើសរើស <b>ភេទ</b> របស់អ្នក៖",
+                "Please select your <b>Gender</b>:",
                 reply_markup={"inline_keyboard": inline_keyboard}
             )
             return
@@ -1959,14 +1959,14 @@ async def handle_telegram_update(payload: dict):
             if len(parts) < 2:
                 await bot.send_message(
                     chat_id,
-                    "📝 <b>របៀបកត់ត្រាអាហារដោយផ្ទាល់៖</b>\n"
+                    "📝 <b>How to log a meal directly:</b>\n"
                     "━━━━━━━━━━━━━━━━━━━━\n"
-                    "សូមវាយ៖ <b>/log [ឈ្មោះអាហារ និងបរិមាណ]</b>\n"
-                    "ឧទាហរណ៍៖ <b>/log បាយស ២០០ក្រាម សាច់មាន់ ១០០ក្រាម</b>\n\n"
-                    "📅 <b>កត់ត្រាសម្រាប់ថ្ងៃផ្សេងទៀត (បើភ្លេច)៖</b>\n"
-                    "សូមវាយ៖ <b>/log [កាលបរិច្ឆេទ/ម្សិលមិញ] [ឈ្មោះអាហារ]</b>\n"
-                    "ឧទាហរណ៍៖ <b>/log ម្សិលមិញ បាយឆាសាច់ជ្រូក</b>\n"
-                    "ឬ <b>/log 02-06-2026 បាយឆាសាច់ជ្រូក</b>"
+                    "Please type: <b>/log [food name and portion]</b>\n"
+                    "Example: <b>/log 200g white rice, 100g chicken</b>\n\n"
+                    "📅 <b>Log for other dates (if forgotten):</b>\n"
+                    "Please type: <b>/log [date/yesterday] [food name]</b>\n"
+                    "Example: <b>/log yesterday pork fried rice</b>\n"
+                    "or <b>/log 02-06-2026 pork fried rice</b>"
                 )
                 return
             
@@ -1985,19 +1985,19 @@ async def handle_telegram_update(payload: dict):
                     if len(sub_parts) < 2:
                         await bot.send_message(
                             chat_id,
-                            f"📅 <b>កត់ត្រាសម្រាប់ថ្ងៃ៖ {custom_date}</b>\n"
+                            f"📅 <b>Log for Date: {custom_date}</b>\n"
                             "━━━━━━━━━━━━━━━━━━━━\n"
-                            "សូមបញ្ចូលឈ្មោះអាហារបន្ថែមផងដែរ។\n"
-                            f"ឧទាហរណ៍៖ <b>/log {potential_date} បាយឆាសាច់ជ្រូក</b>"
+                            "Please also enter a food description.\n"
+                            f"Example: <b>/log {potential_date} Chicken salad</b>"
                         )
                         return
                     food_description = sub_parts[1]
             
-            display_date = custom_date if custom_date else "ថ្ងៃនេះ"
-            if date_token_src and date_token_src.lower() in ["yesterday", "ម្សិលមិញ"]:
-                display_date = "ម្សិលមិញ"
-            elif date_token_src and date_token_src.lower() in ["ម្សិលម្ងៃ", "ម្សិលម្ង៉ៃ", "ម្សិលមិញមួយថ្ងៃ"]:
-                display_date = "ម្សិលម្ងៃ"
+            display_date = custom_date if custom_date else "today"
+            if date_token_src and date_token_src.lower() in ["yesterday", "yesterday"]:
+                display_date = "Yesterday"
+            elif date_token_src and date_token_src.lower() in ["day before yesterday", "day before yesterday"]:
+                display_date = "Day before yesterday"
                 
             # Clear any active manual log state for the user
             db_clear_manual_log_state(user_id)
@@ -2011,10 +2011,10 @@ async def handle_telegram_update(payload: dict):
             )
             
             prompt_text = (
-                f"📝 <b>កត់ត្រាអាហារ៖ {food_description}</b> ({display_date})\n"
+                f"📝 <b>Log Food: {food_description}</b> ({display_date})\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"🔥 សូមវាយបញ្ចូលចំនួន <b>កាឡូរី (Calories/Cal)</b>៖\n\n"
-                f"<i>(សូមវាយបញ្ចូលជាលេខ ឬផ្ញើ /cancel ដើម្បីបោះបង់)</i>"
+                f"🔥 Please enter the amount of <b>Calories (Calories/Cal)</b>:\n\n"
+                f"<i>(Please enter a number or send /cancel to abort)</i>"
             )
             await bot.send_message(chat_id, prompt_text)
             return
@@ -2024,9 +2024,9 @@ async def handle_telegram_update(payload: dict):
             db_clear_tdee_state(user_id)
             await bot.send_message(
                 chat_id,
-                "❌ <b>បានបោះបង់!</b>\n"
+                "❌ <b>Cancelled!</b>\n"
                 "━━━━━━━━━━━━━━━━━━━━\n"
-                "ការកត់ត្រាបច្ចុប្បន្នត្រូវបានលុបចោល និងសម្អាតជោគជ័យ។"
+                "Current session cleared successfully."
             )
             return
 
@@ -2036,8 +2036,8 @@ async def handle_telegram_update(payload: dict):
                 current_goal = db_get_user_goal(user_id)
                 await bot.send_message(
                     chat_id, 
-                    f"🎯 គោលដៅកាឡូរីប្រចាំថ្ងៃបច្ចុប្បន្នរបស់អ្នកគឺ: <b>{current_goal} Cal</b>។\n"
-                    f"ដើម្បីធ្វើបច្ចុប្បន្នភាព សូមវាយ: <code>/goal 1800</code>"
+                    f"🎯 Your current daily calorie goal is: <b>{current_goal} Cal</b>.\n"
+                    f"To update it, type: <code>/goal 1800</code>"
                 )
                 return
             
@@ -2048,15 +2048,15 @@ async def handle_telegram_update(payload: dict):
                 db_update_user_goal(user_id, new_goal)
                 await bot.send_message(
                     chat_id,
-                    f"✅ <b>គោលដៅប្រចាំថ្ងៃត្រូវបានធ្វើបច្ចុប្បន្នភាព!</b>\n"
+                    f"✅ <b>Daily Calorie Goal Updated!</b>\n"
                     f"━━━━━━━━━━━━━━━━━━━━\n"
-                    f"គោលដៅកាឡូរីប្រចាំថ្ងៃរបស់អ្នកឥឡូវនេះគឺ <b>{new_goal} Cal</b>។"
+                    f"Your daily calorie goal is now set to <b>{new_goal} Cal</b>."
                 )
             except ValueError:
                 await bot.send_message(
                     chat_id,
-                    "⚠️ <b>ចំនួនកាឡូរីមិនត្រឹមត្រូវទេ!</b>\n"
-                    "សូមផ្តល់ចំនួនលេខវិជ្ជមានសមរម្យមួយ។ ឧទាហរណ៍៖ <b>/goal 2000</b>"
+                    "⚠️ <b>Invalid Calories!</b>\n"
+                    "Please provide a valid calorie goal number. Example: <b>/goal 2000</b>"
                 )
             return
 
@@ -2070,39 +2070,39 @@ async def handle_telegram_update(payload: dict):
                 reminders = db_get_reminders(user_id)
                 if not reminders:
                     reminder_text = (
-                        "🔔 <b>កំណត់ម៉ោងរំលឹកកត់ត្រាអាហារ</b>\n"
+                        "🔔 <b>Set Meal Logging Reminder</b>\n"
                         "━━━━━━━━━━━━━━━━━━━━\n"
-                        f"📅 <b>ថ្ងៃនេះ៖</b> <b>{today_date_str}</b>\n"
+                        f"📅 <b>Today:</b> <b>{today_date_str}</b>\n"
                         "━━━━━━━━━━━━━━━━━━━━\n"
-                        "អ្នកមិនទាន់មានម៉ោងរំលឹកនៅឡើយទេ។\n\n"
-                        "💡 <b>របៀបកំណត់ម៉ោងរំលឹក (ម៉ោងនៅកម្ពុជា)៖</b>\n"
-                        "• វាយ <b>/reminder 08:00</b> — ដើម្បីរំលឹកម៉ោង ៨:០០ ព្រឹក\n"
-                        "• វាយ <b>/reminder 12:30</b> — ដើម្បីរំលឹកម៉ោង ១២:៣០ ថ្ងៃត្រង់\n"
-                        "• វាយ <b>/reminder 19:00</b> — ដើម្បីរំលឹកម៉ោង ៧:០០ យប់\n\n"
-                        "<b>ចំណាំ៖ ម៉ោងរំលឹកនឹងត្រូវបង្គត់ទៅរៀងរាល់ ១០នាទីម្តង។</b>"
+                        "You don't have any reminders set yet.\n\n"
+                        "💡 <b>How to set a reminder:</b>\n"
+                        "• Type <b>/reminder 08:00</b> — to remind at 8:00 AM\n"
+                        "• Type <b>/reminder 12:30</b> — to remind at 12:30 PM\n"
+                        "• Type <b>/reminder 19:00</b> — to remind at 7:00 PM\n\n"
+                        "<b>Note: Reminders will be rounded to the nearest 10 minutes.</b>"
                     )
                     await bot.send_message(chat_id, reminder_text)
                 else:
                     reminder_text = (
-                        "🔔 <b>ម៉ោងរំលឹកបច្ចុប្បន្នរបស់អ្នក (ម៉ោងនៅកម្ពុជា)៖</b>\n"
+                        "🔔 <b>Your Current Reminders:</b>\n"
                         "━━━━━━━━━━━━━━━━━━━━\n"
-                        f"📅 <b>ថ្ងៃនេះ៖</b> <b>{today_date_str}</b>\n"
+                        f"📅 <b>Today:</b> <b>{today_date_str}</b>\n"
                         "━━━━━━━━━━━━━━━━━━━━\n"
                     )
                     inline_keyboard = []
                     for idx, r_time in enumerate(reminders, start=1):
-                        reminder_text += f"{idx}. ⏰ ម៉ោង <b>{r_time}</b>\n"
+                        reminder_text += f"{idx}. ⏰ Time <b>{r_time}</b>\n"
                         inline_keyboard.append([
                             {
-                                "text": f"🗑️ លុបម៉ោង {r_time}",
+                                "text": f"🗑️ Delete {r_time}",
                                 "callback_data": f"delete_reminder:{r_time}"
                             }
                         ])
                     
                     reminder_text += (
-                        "\n💡 <b>គន្លឹះ៖</b>\n"
-                        "• ដើម្បីបន្ថែមម៉ោងរំលឹកថ្មី៖ <b>/reminder 08:00</b>\n"
-                        "• ដើម្បីលុបទាំងអស់៖ <b>/reminder clear</b>"
+                        "\n💡 <b>Tips:</b>\n"
+                        "• To add a new reminder: <b>/reminder 08:00</b>\n"
+                        "• To clear all reminders: <b>/reminder clear</b>"
                     )
                     await bot.send_message(chat_id, reminder_text, reply_markup={"inline_keyboard": inline_keyboard})
                 return
@@ -2112,8 +2112,8 @@ async def handle_telegram_update(payload: dict):
                 db_clear_reminders(user_id)
                 await bot.send_message(
                     chat_id,
-                    f"✅ <b>បានលុបម៉ោងរំលឹកទាំងអស់របស់អ្នករួចរាល់!</b>\n"
-                    f"📅 <b>ថ្ងៃនេះ៖</b> <b>{today_date_str}</b>"
+                    f"✅ <b>All reminders cleared successfully!</b>\n"
+                    f"📅 <b>Today:</b> <b>{today_date_str}</b>"
                 )
                 return
             
@@ -2134,17 +2134,17 @@ async def handle_telegram_update(payload: dict):
                 
                 await bot.send_message(
                     chat_id,
-                    f"✅ <b>បានកំណត់ម៉ោងរំលឹករួចរាល់!</b>\n"
+                    f"✅ <b>Reminder set successfully!</b>\n"
                     f"━━━━━━━━━━━━━━━━━━━━\n"
-                    f"📅 <b>ថ្ងៃនេះ:</b> <code>{today_date_str}</code>\n"
+                    f"📅 <b>Today:</b> <code>{today_date_str}</code>\n"
                     f"━━━━━━━━━━━━━━━━━━━━\n"
-                    f"ខ្ញុំនឹងផ្ញើសាររំលឹកអ្នកកុំឱ្យភ្លេចកត់ត្រាអាហារនៅម៉ោង <b>{formatted_time}</b> (ម៉ោងនៅកម្ពុជា) ជារៀងរាល់ថ្ងៃ។"
+                    f"I will remind you to log your meals every day at <b>{formatted_time}</b>."
                 )
             except ValueError:
                 await bot.send_message(
                     chat_id,
-                    "⚠️ <b>ទម្រង់ម៉ោងមិនត្រឹមត្រូវទេ!</b>\n"
-                    "សូមផ្តល់ទម្រង់ម៉ោង <b>HH:MM</b> (២៤ម៉ោង)។ ឧទាហរណ៍៖ <b>/reminder 08:00</b> ឬ <b>/reminder 19:30</b>"
+                    "⚠️ <b>Invalid Time Format!</b>\n"
+                    "Please provide time in <b>HH:MM</b> format (24-hour). Example: <b>/reminder 08:00</b> or <b>/reminder 19:30</b>"
                 )
             return
             
@@ -2189,34 +2189,34 @@ async def handle_telegram_update(payload: dict):
 
             meal_list_str = ""
             if not today_meals:
-                meal_list_str = "<b>មិនទាន់មានអាហារបានកត់ត្រាសម្រាប់ថ្ងៃនេះនៅឡើយទេ។ ផ្ញើរូបថតអាហារដើម្បីចាប់ផ្តើម!</b>"
+                meal_list_str = "<b>No meals logged for today yet. Send a food photo to start!</b>"
             else:
                 for idx, m in enumerate(today_meals, start=1):
                     meal_list_str += f"{idx}. <b>{m['food_name']}</b> ({m['calories']} Cal)\n"
 
             # Check if user logged /nosweet today in ICT
             nosweet_logged = db_check_today_nosweet(user_id)
-            nosweet_status = "<b>ជោគជ័យ ✅</b>" if nosweet_logged else "<b>មិនទាន់កត់ត្រា ⏳</b> (វាយ /nosweet)"
+            nosweet_status = "<b>Done ✅</b>" if nosweet_logged else "<b>Pending ⏳</b> (type /nosweet)"
 
             balance_emoji = "⚖️" if remaining >= 0 else "🚨"
-            remaining_str = f"សល់ <b>{remaining} Cal</b>" if remaining >= 0 else f"លើស <b>{-remaining} Cal</b>"
+            remaining_str = f"remaining <b>{remaining} Cal</b>" if remaining >= 0 else f"over <b>{-remaining} Cal</b>"
 
             stats_text = (
-                "📊 <b>របាយការណ៍សង្ខេបប្រចាំថ្ងៃ (UTC)</b>\n"
+                "📊 <b>Daily Summary Report (UTC)</b>\n"
                 "━━━━━━━━━━━━━━━━━━━━\n"
-                f"🎯 <b>គោលដៅប្រចាំថ្ងៃ៖</b> <b>{goal} Cal</b>\n"
-                f"🔥 <b>បានញ៉ាំសរុប៖</b> <b>{total_cals} Cal</b>\n"
-                f"🏃 <b>បានដុតរំលាយ៖</b> <b>{total_burn} Cal</b>\n"
-                f"{balance_emoji} <b>ស្ថានភាព៖</b> {remaining_str}\n"
-                f"🥤 <b>No Sweet Challenge៖</b> {nosweet_status}\n"
+                f"🎯 <b>Daily Goal:</b> <b>{goal} Cal</b>\n"
+                f"🔥 <b>Total Consumed:</b> <b>{total_cals} Cal</b>\n"
+                f"🏃 <b>Burned:</b> <b>{total_burn} Cal</b>\n"
+                f"{balance_emoji} <b>Status:</b> {remaining_str}\n"
+                f"🥤 <b>Sweet-Free Challenge:</b> {nosweet_status}\n"
                 "━━━━━━━━━━━━━━━━━━━━\n"
-                "<b>សារធាតុចិញ្ចឹមសរុប៖</b>\n"
-                f"🥩 <b>ប្រូតេអ៊ីន៖</b> <b>{tot_protein}g</b>\n"
-                f"🧈 <b>ខ្លាញ់សរុប៖</b> <b>{tot_fat}g</b>\n"
-                f"🍞 <b>កាបូអ៊ីដ្រាត៖</b> <b>{tot_carbs}g</b>\n"
-                f"🍬 <b>ស្ករ៖</b> <b>{tot_sugar}g</b>\n"
+                "<b>Total Nutrients:</b>\n"
+                f"🥩 <b>Protein:</b> <b>{tot_protein}g</b>\n"
+                f"🧈 <b>Total Fat:</b> <b>{tot_fat}g</b>\n"
+                f"🍞 <b>Carbohydrates:</b> <b>{tot_carbs}g</b>\n"
+                f"🍬 <b>Sugar:</b> <b>{tot_sugar}g</b>\n"
                 "━━━━━━━━━━━━━━━━━━━━\n"
-                "<b>អាហារដែលបានញ៉ាំថ្ងៃនេះ៖</b>\n"
+                "<b>Meals Eaten Today:</b>\n"
                 f"{meal_list_str}"
             )
 
@@ -2224,7 +2224,7 @@ async def handle_telegram_update(payload: dict):
                 "inline_keyboard": [
                     [
                         {
-                            "text": "🗑️ សម្អាតកំណត់ត្រាថ្ងៃនេះ",
+                            "text": "🗑️ Reset Today's Logs",
                             "callback_data": "reset_today"
                         }
                     ]
@@ -2242,16 +2242,16 @@ async def handle_telegram_update(payload: dict):
                 if not token_info:
                     await bot.send_message(
                         chat_id,
-                        "🏃 <b>កំណត់ត្រាការដុតរំលាយកាឡូរី (Strava)</b>\n"
+                        "🏃 <b>Active Calories Burned (Strava)</b>\n"
                         "━━━━━━━━━━━━━━━━━━━━\n"
-                        "គណនីរបស់អ្នកមិនទាន់បានភ្ជាប់ជាមួយ <b>Strava</b> នៅឡើយទេ។\n\n"
-                        "👉 ដើម្បីភ្ជាប់គណនី សូមវាយបញ្ជា៖ <b>/strava</b>\n"
-                        "👉 ដើម្បីកត់ត្រាកាឡូរីដោយផ្ទាល់ សូមវាយ៖ <b>/burn [ចំនួនកាឡូរី]</b> (ឧ. <b>/burn 350</b>)"
+                        "Your account is not connected to <b>Strava</b> yet.\n\n"
+                        "👉 To link your account, type: <b>/strava</b>\n"
+                        "👉 To log active calories manually, type: <b>/burn [calories]</b> (e.g. <b>/burn 350</b>)"
                     )
                     return
                 
                 # Connected, let's fetch the latest activity
-                loading_msg = await bot.send_message(chat_id, "🔄 <i>កំពុងទាញយកលំហាត់ប្រាណចុងក្រោយពី Strava... សូមរង់ចាំមួយភ្លែត។</i>")
+                loading_msg = await bot.send_message(chat_id, "🔄 <i>Fetching your latest workout from Strava... Please wait.</i>")
                 loading_msg_id = loading_msg.get("result", {}).get("message_id")
                 
                 try:
@@ -2273,14 +2273,14 @@ async def handle_telegram_update(payload: dict):
                                 
                         if is_duplicate:
                             duplicate_card = (
-                                "✅ <b>លំហាត់ប្រាណនេះត្រូវបានកត់ត្រារួចហើយ</b>\n"
+                                "✅ <b>This activity is already logged</b>\n"
                                 "━━━━━━━━━━━━━━━━━━━━\n"
-                                f"🚴 <b>សកម្មភាព៖</b> <b>{session['activity_name']}</b> ({session['session_name']})\n"
-                                f"🔥 <b>ដុតកាឡូរី៖</b> <b>{session['calories']} Cal</b>\n"
-                                f"⏲ <b>ពេលវេលា៖</b> <b>{session['duration']} នាទី</b>\n"
-                                f"🗾 <b>ចម្ងាយ៖</b> <b>{session['distance']} គីឡូម៉ែត្រ</b>\n"
+                                f"🚴 <b>Activity:</b> <b>{session['activity_name']}</b> ({session['session_name']})\n"
+                                f"🔥 <b>Calories Burned:</b> <b>{session['calories']} Cal</b>\n"
+                                f"⏲ <b>Duration:</b> <b>{session['duration']} mins</b>\n"
+                                f"🗾 <b>Distance:</b> <b>{session['distance']} km</b>\n"
                                 "━━━━━━━━━━━━━━━━━━━━\n"
-                                "លំហាត់ប្រាណចុងក្រោយរបស់អ្នក ត្រូវបានកត់ត្រារក្សាទុករួចរាល់នៅក្នុងប្រព័ន្ធហើយ! 😉"
+                                "Your latest workout has already been logged in the system! 😉"
                             )
                             if loading_msg_id:
                                 await bot.edit_message(chat_id, loading_msg_id, duplicate_card)
@@ -2300,31 +2300,31 @@ async def handle_telegram_update(payload: dict):
                                 # Format display date
                                 date_parts = activity_date.split('-')
                                 formatted_display_date = f"{date_parts[2]}-{date_parts[1]}-{date_parts[0]}"
-                                display_day = f"ថ្ងៃ {formatted_display_date}"
+                                display_day = f"on {formatted_display_date}"
                                 yesterday_str = (now_kh - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
                                 if activity_date == yesterday_str:
-                                    display_day = "ម្សិលមិញ"
+                                    display_day = "Yesterday"
                                 
                                 success_card = (
-                                    "🔥 <b>បានទាញយកលំហាត់ប្រាណចុងក្រោយជោគជ័យ!</b>\n"
+                                    "🔥 <b>Latest Workout Imported!</b>\n"
                                     "━━━━━━━━━━━━━━━━━━━━\n"
-                                    f"🚴 <b>សកម្មភាព៖</b> <b>{session['activity_name']}</b> ({session['session_name']})\n"
-                                    f"🔥 <b>ដុតកាឡូរី៖</b> <b>{session['calories']} Cal</b>\n"
-                                    f"⏲ <b>ពេលវេលា៖</b> <b>{session['duration']} នាទី</b>\n"
-                                    f"🗾 <b>ចម្ងាយ៖</b> <b>{session['distance']} គីឡូម៉ែត្រ</b>\n"
+                                    f"🚴 <b>Activity:</b> <b>{session['activity_name']}</b> ({session['session_name']})\n"
+                                    f"🔥 <b>Calories Burned:</b> <b>{session['calories']} Cal</b>\n"
+                                    f"⏲ <b>Duration:</b> <b>{session['duration']} mins</b>\n"
+                                    f"🗾 <b>Distance:</b> <b>{session['distance']} km</b>\n"
                                     "━━━━━━━━━━━━━━━━━━━━\n"
-                                    f"សកម្មភាពនេះត្រូវបានបន្ថែមទៅក្នុងកំណត់ត្រាដុតកាឡូរី <b>{display_day}</b> របស់អ្នករួចរាល់ហើយ! 💪"
+                                    f"This activity has been added to your burned logs for <b>{display_day}</b>! 💪"
                                 )
                             else:
                                 success_card = (
-                                    "🔥 <b>បានទាញយកលំហាត់ប្រាណចុងក្រោយជោគជ័យ!</b>\n"
+                                    "🔥 <b>Latest Workout Imported!</b>\n"
                                     "━━━━━━━━━━━━━━━━━━━━\n"
-                                    f"🚴 <b>សកម្មភាព៖</b> <b>{session['activity_name']}</b> ({session['session_name']})\n"
-                                    f"🔥 <b>ដុតកាឡូរី៖</b> <b>{session['calories']} Cal</b>\n"
-                                    f"⏲ <b>ពេលវេលា៖</b> <b>{session['duration']} នាទី</b>\n"
-                                    f"🗾 <b>ចម្ងាយ៖</b> <b>{session['distance']} គីឡូម៉ែត្រ</b>\n"
+                                    f"🚴 <b>Activity:</b> <b>{session['activity_name']}</b> ({session['session_name']})\n"
+                                    f"🔥 <b>Calories Burned:</b> <b>{session['calories']} Cal</b>\n"
+                                    f"⏲ <b>Duration:</b> <b>{session['duration']} mins</b>\n"
+                                    f"🗾 <b>Distance:</b> <b>{session['distance']} km</b>\n"
                                     "━━━━━━━━━━━━━━━━━━━━\n"
-                                    "សកម្មភាពនេះត្រូវបានបន្ថែមទៅក្នុងកំណត់ត្រាដុតកាឡូរីថ្ងៃនេះរបស់អ្នករួចរាល់ហើយ! 💪"
+                                    "This activity has been added to today's burned calories! 💪"
                                 )
                             if loading_msg_id:
                                 await bot.edit_message(chat_id, loading_msg_id, success_card)
@@ -2332,13 +2332,13 @@ async def handle_telegram_update(payload: dict):
                                 await bot.send_message(chat_id, success_card)
                     else:
                         fail_msg = (
-                            "⚠️ <b>មិនឃើញទិន្នន័យហាត់ប្រាណក្នុង Strava!</b>\n"
+                            "⚠️ <b>No Workouts Found in Strava!</b>\n"
                             "━━━━━━━━━━━━━━━━━━━━\n"
-                            "រកមិនឃើញកំណត់ត្រាលំហាត់ប្រាណ ឬសកម្មភាពហាត់ប្រាណ (សកម្មភាព ៧ថ្ងៃចុងក្រោយ) នៅក្នុងគណនី Strava របស់អ្នកឡើយទេ។\n\n"
-                            "💡 <b>ដំណោះស្រាយ៖</b>\n"
-                            "1. សូមប្រាកដថានាឡិកា ឬកម្មវិធីសុខភាពរបស់អ្នកបាន Sync ជាមួយ Strava រួចរាល់។\n"
-                            "2. អ្នកអាចកត់ត្រាកាឡូរីដោយផ្ទាល់ដោយវាយ៖ <b>/burn [ចំនួនកាឡូរី]</b>\n"
-                            "ឧទាហរណ៍៖ <b>/burn 350</b>"
+                            "No exercise sessions or activities found (last 7 days) in your Strava account.\n\n"
+                            "💡 <b>Action Plan:</b>\n"
+                            "1. Make sure your fitness watch or app has synced with Strava.\n"
+                            "2. You can log calories manually by typing: <b>/burn [calories]</b>\n"
+                            "Example: <b>/burn 350</b>"
                         )
                         if loading_msg_id:
                             await bot.edit_message(chat_id, loading_msg_id, fail_msg)
@@ -2347,10 +2347,10 @@ async def handle_telegram_update(payload: dict):
                 except Exception as strava_err:
                     print(f"Error fetching latest Strava activity inside command: {strava_err}")
                     error_msg = (
-                        "⚠️ <b>ការទាញយកទិន្នន័យបានបរាជ័យ</b>\n"
+                        "⚠️ <b>Sync Failed</b>\n"
                         "━━━━━━━━━━━━━━━━━━━━\n"
-                        f"កំហុសបច្ចេកទេស៖\n<code>{strava_err}</code>\n\n"
-                        "សូមព្យាយាមម្តងទៀត ឬកត់ត្រាដោយផ្ទាល់៖ <b>/burn [ចំនួនកាឡូរី]</b>"
+                        f"Technical error:\n<code>{strava_err}</code>\n\n"
+                        "Please try again or log manually: <b>/burn [calories]</b>"
                     )
                     if loading_msg_id:
                         await bot.edit_message(chat_id, loading_msg_id, error_msg)
@@ -2380,9 +2380,9 @@ async def handle_telegram_update(payload: dict):
             if calories is None:
                 await bot.send_message(
                     chat_id,
-                    "⚠️ <b>ចំនួនកាឡូរីមិនត្រឹមត្រូវទេ!</b>\n"
-                    "សូមវាយបញ្ចូលចំនួនលេខវិជ្ជមានសមរម្យ។ ឧទាហរណ៍៖ <b>/burn 350</b>\n"
-                    "ឬកត់ត្រាសម្រាប់ថ្ងៃមុន៖ <b>/burn 350 ម្សិលមិញ</b>"
+                    "⚠️ <b>Invalid Calories!</b>\n"
+                    "Please enter a valid positive number. Example: <b>/burn 350</b>\n"
+                    "Or log for a past date: <b>/burn 350 yesterday</b>"
                 )
                 return
                 
@@ -2393,30 +2393,30 @@ async def handle_telegram_update(payload: dict):
                     now_kh = datetime.datetime.utcnow() + datetime.timedelta(hours=7)
                     date_parts = custom_date.split('-')
                     formatted_display_date = f"{date_parts[2]}-{date_parts[1]}-{date_parts[0]}"
-                    display_day = f"ថ្ងៃ {formatted_display_date}"
-                    if date_token_src and date_token_src.lower() in ["yesterday", "ម្សិលមិញ"]:
-                        display_day = "ម្សិលមិញ"
-                    elif date_token_src and date_token_src.lower() in ["ម្សិលម្ងៃ", "ម្សិលម្ង៉ៃ", "ម្សិលមិញមួយថ្ងៃ"]:
-                        display_day = "ម្សិលម្ងៃ"
+                    display_day = f"on {formatted_display_date}"
+                    if date_token_src and date_token_src.lower() in ["yesterday", "yesterday"]:
+                        display_day = "Yesterday"
+                    elif date_token_src and date_token_src.lower() in ["day before yesterday", "day before yesterday"]:
+                        display_day = "Day before yesterday"
                     
                     await bot.send_message(
                         chat_id,
-                        "🔥 <b>បានកត់ត្រាការដុតរំលាយជោគជ័យ!</b>\n"
+                        "🔥 <b>Calories Burned Logged Successfully!</b>\n"
                         "━━━━━━━━━━━━━━━━━━━━\n"
-                        f"🏃 <b>ថ្ងៃ {display_day} អ្នកបានដុតរំលាយ៖</b> <b>{calories} Cal</b>\n"
-                        "💪 រក្សាសកម្មភាពរាងកាយល្អនេះបន្តទៀត!"
+                        f"🏃 <b>On {display_day} you burned:</b> <b>{calories} Cal</b>\n"
+                        "💪 Keep up the active movement!"
                     )
                 else:
                     await bot.send_message(
                         chat_id,
-                        "🔥 <b>បានកត់ត្រាការដុតរំលាយជោគជ័យ!</b>\n"
+                        "🔥 <b>Calories Burned Logged Successfully!</b>\n"
                         "━━━━━━━━━━━━━━━━━━━━\n"
-                        f"🏃 <b>ថ្ងៃនេះអ្នកបានដុតរំលាយ៖</b> <b>{calories} Cal</b>\n"
-                        "💪 រក្សាសកម្មភាពរាងកាយល្អនេះបន្តទៀត!"
+                        f"🏃 <b>Today you burned:</b> <b>{calories} Cal</b>\n"
+                        "💪 Keep up the active movement!"
                     )
             except Exception as e:
                 print(f"Error saving manual burn: {e}")
-                await bot.send_message(chat_id, f"⚠️ <b>ការកត់ត្រាមានបញ្ហា៖</b> {e}")
+                await bot.send_message(chat_id, f"⚠️ <b>Logging failed:</b> {e}")
             return
             
         elif text.startswith("/strava"):
@@ -2427,9 +2427,9 @@ async def handle_telegram_update(payload: dict):
             if not client_id or not client_secret or not redirect_uri:
                 await bot.send_message(
                     chat_id,
-                    "⚠️ <b>ការកំណត់មិនទាន់រួចរាល់!</b>\n"
+                    "⚠️ <b>Setup Not Complete!</b>\n"
                     "━━━━━━━━━━━━━━━━━━━━\n"
-                    "ម្ចាស់ប្រព័ន្ធមិនទាន់បានកំណត់ព័ត៌មានសម្ងាត់ Strava (Client ID, Client Secret, & Redirect URI) នៅក្នុងឯកសារ `.env` នៅឡើយទេ។"
+                    "The system administrator has not configured Strava credentials in the environment variables yet."
                 )
                 return
                 
@@ -2437,25 +2437,25 @@ async def handle_telegram_update(payload: dict):
             if token_info:
                 valid_token = await get_valid_strava_token(user_id, token_info)
                 if valid_token:
-                    status_text = "✅ <b>បានភ្ជាប់ជោគជ័យ! (Connected)</b>"
+                    status_text = "✅ <b>Connected</b>"
                 else:
-                    status_text = "⚠️ <b>បញ្ហាក្នុងការភ្ជាប់/ហួសសម័យ!</b>"
+                    status_text = "⚠️ <b>Connection Expired/Error</b>"
                     
                 strava_card = (
                     "🏃 <b>Strava Integration Status</b>\n"
                     "━━━━━━━━━━━━━━━━━━━━\n"
-                    f"• ស្ថានភាព៖ {status_text}\n"
-                    "• គណនី៖ គណនី Strava របស់អ្នកត្រូវបានភ្ជាប់រួចរាល់\n\n"
-                    "💡 <b>មុខងារគាំទ្រ៖</b>\n"
-                    "1. <b>Auto-Import Exercise:</b> វាយបញ្ជា <b>/burn</b> (ដោយគ្មានលេខកាឡូរី) ដើម្បីទាញយកសកម្មភាពហាត់ប្រាណចុងក្រោយរបស់ថ្ងៃនេះពី Strava មកកត់ត្រាក្នុង NutriBot ភ្លាមៗ!\n"
+                    f"• Status: {status_text}\n"
+                    "• Account: Your Strava account is successfully linked\n\n"
+                    "💡 <b>Features:</b>\n"
+                    "1. <b>Auto-Import Exercise:</b> Type <b>/burn</b> (without arguments) to instantly fetch and log your latest workout of today from Strava!\n"
                     "━━━━━━━━━━━━━━━━━━━━\n"
-                    "ប្រសិនបើអ្នកចង់ផ្តាច់ការភ្ជាប់ សូមចុចប៊ូតុងខាងក្រោម៖"
+                    "If you want to disconnect, click the button below:"
                 )
                 inline_reply_markup = {
                     "inline_keyboard": [
                         [
                             {
-                                "text": "🔌 ផ្តាច់ការភ្ជាប់ Strava",
+                                "text": "🔌 Disconnect Strava",
                                 "callback_data": "disconnect_strava"
                             }
                         ]
@@ -2467,18 +2467,18 @@ async def handle_telegram_update(payload: dict):
                 auth_url = f"{base_auth_url}?user_id={user_id}"
                 
                 welcome_card = (
-                    "🏃 <b>ភ្ជាប់គណនីជាមួយ Strava</b>\n"
+                    "🏃 <b>Connect with Strava</b>\n"
                     "━━━━━━━━━━━━━━━━━━━━\n"
-                    "បង្កើនភាពងាយស្រួលដោយភ្ជាប់ NutriBot ជាមួយ Strava! ខ្ញុំនឹងជួយអ្នកក្នុង៖\n\n"
-                    "• <b>ស្វ័យប្រវត្តកត់ត្រាដុតកាឡូរី៖</b> ទាញយកទិន្នន័យហាត់ប្រាណដែលអ្នកបានធ្វើពីគ្រប់ឧបករណ៍/កម្មវិធីសុខភាព (នាឡិកាឆ្លាតវៃ កម្មវិធីរត់ កង់...) មកកាន់ NutriBot ដោយគ្រាន់តែប្រើបញ្ជា <b>/burn</b>!\n"
+                    "Connect NutriBot with Strava for automated tracking! I will help you with:\n\n"
+                    "• <b>Auto-Sync Exercise:</b> Instantly import exercise and burned calories from any connected fitness devices (smartwatch, tracking apps) by typing <b>/burn</b>!\n"
                     "━━━━━━━━━━━━━━━━━━━━\n"
-                    "សូមចុចប៊ូតុងខាងក្រោមដើម្បីផ្ទៀងផ្ទាត់ និងភ្ជាប់គណនី Strava របស់អ្នក៖"
+                    "Please click the button below to verify and connect your Strava account:"
                 )
                 inline_reply_markup = {
                     "inline_keyboard": [
                         [
                             {
-                                "text": "🔗 ភ្ជាប់ជាមួយ Strava",
+                                "text": "🔗 Connect to Strava",
                                 "url": auth_url
                             }
                         ]
@@ -2492,9 +2492,9 @@ async def handle_telegram_update(payload: dict):
             if already_logged:
                 await bot.send_message(
                     chat_id,
-                    "🥤 <b>កំណត់ត្រាថ្ងៃនេះរួចរាល់ហើយ!</b>\n"
+                    "🥤 <b>Today's entry already logged!</b>\n"
                     "━━━━━━━━━━━━━━━━━━━━\n"
-                    "អ្នកបានកត់ត្រាការតមភេសជ្ជៈផ្អែមសម្រាប់ថ្ងៃនេះរួចរាល់ហើយ។ រង់ចាំកត់ត្រាម្តងទៀតនៅថ្ងៃស្អែក! 😉"
+                    "You have already logged your sweet-free status for today. See you tomorrow! 😉"
                 )
             else:
                 db_add_nosweet_log(user_id)
@@ -2502,8 +2502,8 @@ async def handle_telegram_update(payload: dict):
                     chat_id,
                     "🥤 <b>No Sweet Drink Challenge!</b>\n"
                     "━━━━━━━━━━━━━━━━━━━━\n"
-                    "✅ <b>ថ្ងៃនេះអ្នកមិនបានញ៉ាំភេសជ្ជៈផ្អែមទេ!</b>\n"
-                    "រក្សាការតស៊ូដ៏ល្អនេះបន្តទៀត ដើម្បីសុខភាពល្អ និងសម្រកទម្ងន់! 💪"
+                    "✅ <b>You stayed sweet-free today!</b>\n"
+                    "Keep up the great work for better health and fitness! 💪"
                 )
             return
 
@@ -2516,20 +2516,20 @@ async def handle_telegram_update(payload: dict):
                 if old_weight is not None:
                     await bot.send_message(
                         chat_id,
-                        f"⚖️ <b>បច្ចុប្បន្នភាពទម្ងន់របស់អ្នក</b>\n"
+                        f"⚖️ <b>Update Your Weight</b>\n"
                         "━━━━━━━━━━━━━━━━━━━━\n"
-                        f"ទម្ងន់បច្ចុប្បន្នរបស់អ្នកគឺ៖ <b>{old_weight:.1f} kg</b>\n\n"
-                        "ដើម្បីធ្វើបច្ចុប្បន្នភាពទម្ងន់ សូមវាយ៖ <b>/weight [ទម្ងន់ថ្មីជាគីឡូក្រាម]</b>\n"
-                        "ឧទាហរណ៍៖ <b>/weight 68.5</b>"
+                        f"Your current weight is: <b>{old_weight:.1f} kg</b>\n\n"
+                        "To update your weight, type: <b>/weight [weight in kg]</b>\n"
+                        "Example: <b>/weight 68.5</b>"
                     )
                 else:
                     await bot.send_message(
                         chat_id,
-                        "⚖️ <b>បច្ចុប្បន្នភាពទម្ងន់របស់អ្នក</b>\n"
+                        "⚖️ <b>Update Your Weight</b>\n"
                         "━━━━━━━━━━━━━━━━━━━━\n"
-                        "អ្នកមិនទាន់មានទិន្នន័យទម្ងន់ប្រវត្តិរូបនៅឡើយទេ។\n\n"
-                        "សូមវាយ៖ <b>/weight [ទម្ងន់របស់អ្នកជាគីឡូក្រាម]</b>\n"
-                        "ឧទាហរណ៍៖ <b>/weight 70</b>"
+                        "You do not have any profile weight logged yet.\n\n"
+                        "Please type: <b>/weight [weight in kg]</b>\n"
+                        "Example: <b>/weight 70</b>"
                     )
                 return
             
@@ -2583,29 +2583,29 @@ async def handle_telegram_update(payload: dict):
                     db_update_tdee_goal(user_id, goal_type, int(new_goal))
                     
                     goal_type_kh = {
-                        "maintain": "Maintain (រក្សាទម្ងន់)",
-                        "mild": "Mild Loss (ស្រកតិចតួច)",
-                        "loss": "Weight Loss (សម្រកទម្ងន់)",
-                        "extreme": "Extreme Loss (សម្រកខ្លាំង)"
+                        "maintain": "Maintain (Maintain Weight)",
+                        "mild": "Mild Loss (Mild Weight Loss)",
+                        "loss": "Weight Loss (Weight Loss)",
+                        "extreme": "Extreme Loss (Extreme Weight Loss)"
                     }.get(goal_type, goal_type)
                     
                     weight_change_str = ""
                     if old_weight is not None:
-                        weight_change_str = f"• ⚖️ ទម្ងន់មុន៖ <b>{old_weight:.1f} kg</b>\n• 🎯 ទម្ងន់ថ្មី៖ <b>{weight_val:.1f} kg</b>"
+                        weight_change_str = f"• ⚖️ Old Weight: <b>{old_weight:.1f} kg</b>\n• 🎯 New Weight: <b>{weight_val:.1f} kg</b>"
                     else:
-                        weight_change_str = f"• ⚖️ ទម្ងន់បច្ចុប្បន្ន៖ <b>{weight_val:.1f} kg</b>"
+                        weight_change_str = f"• ⚖️ Current Weight: <b>{weight_val:.1f} kg</b>"
                         
                     await bot.send_message(
                         chat_id,
-                        f"✅ <b>ទម្ងន់ និងគោលដៅត្រូវបានធ្វើបច្ចុប្បន្នភាព!</b>\n"
+                        f"✅ <b>Weight and Goals Updated!</b>\n"
                         "━━━━━━━━━━━━━━━━━━━━\n"
                         f"{weight_change_str}\n\n"
-                        "🔄 <b>គណនាគោលដៅឡើងវិញស្វ័យប្រវត្ត៖</b>\n"
-                        f"• TDEE ថ្មី៖ <b>{maintain:.0f} Cal</b>\n"
-                        f"• ប្រភេទគោលដៅ៖ <b>{goal_type_kh}</b>\n"
-                        f"• គោលដៅកាឡូរីប្រចាំថ្ងៃ៖ <b>{new_goal:.0f} Cal</b>\n"
+                        "🔄 <b>Automatic Recalculation:</b>\n"
+                        f"• New TDEE: <b>{maintain:.0f} Cal</b>\n"
+                        f"• Goal Type: <b>{goal_type_kh}</b>\n"
+                        f"• Daily Calorie Goal: <b>{new_goal:.0f} Cal</b>\n"
                         "━━━━━━━━━━━━━━━━━━━━\n"
-                        "🎉 គោលដៅកាឡូរីថ្មីត្រូវបានអនុវត្តដោយជោគជ័យ!"
+                        "🎉 Your new daily calorie goal has been applied!"
                     )
                 else:
                     # Update only the weight column in the database
@@ -2616,22 +2616,22 @@ async def handle_telegram_update(payload: dict):
                         
                     weight_change_str = ""
                     if old_weight is not None:
-                        weight_change_str = f"• ⚖️ ទម្ងន់មុន៖ <b>{old_weight:.1f} kg</b>\n• 🎯 ទម្ងន់ថ្មី៖ <b>{weight_val:.1f} kg</b>"
+                        weight_change_str = f"• ⚖️ Old Weight: <b>{old_weight:.1f} kg</b>\n• 🎯 New Weight: <b>{weight_val:.1f} kg</b>"
                     else:
-                        weight_change_str = f"• ⚖️ ទម្ងន់បច្ចុប្បន្ន៖ <b>{weight_val:.1f} kg</b>"
+                        weight_change_str = f"• ⚖️ Current Weight: <b>{weight_val:.1f} kg</b>"
                         
                     await bot.send_message(
                         chat_id,
-                        f"✅ <b>បានកត់ត្រាទម្ងន់រួចរាល់!</b>\n"
+                        f"✅ <b>Weight Logged!</b>\n"
                         "━━━━━━━━━━━━━━━━━━━━\n"
                         f"{weight_change_str}\n\n"
-                        "💡 ដើម្បីគណនាគោលដៅកាឡូរីប្រចាំថ្ងៃដោយស្វ័យប្រវត្តតាមទម្ងន់ថ្មីនេះ សូមវាយ <b>/cal</b> ដើម្បីបំពេញប្រវត្តិរូបរបស់អ្នក!"
+                        "💡 To automatically calculate your goals using this weight, type <b>/cal</b> to set up your profile!"
                     )
             except ValueError:
                 await bot.send_message(
                     chat_id,
-                    "⚠️ <b>ទម្ងន់មិនត្រឹមត្រូវទេ!</b>\n"
-                    "សូមផ្តល់ទម្ងន់ជាលេខវិជ្ជមានសមរម្យ។ ឧទហរណ៍៖ <b>/weight 75.5</b>"
+                    "⚠️ <b>Invalid Weight!</b>\n"
+                    "Please provide a valid weight number. Example: <b>/weight 75.5</b>"
                 )
             return
 
@@ -2698,9 +2698,9 @@ async def handle_telegram_update(payload: dict):
                 
                 # Show remaining or exceeded status cleanly
                 if left >= 0:
-                    left_str = f"សល់ {left}"
+                    left_str = f"remaining {left}"
                 else:
-                    left_str = f"លើស {-left}"
+                    left_str = f"over {-left}"
                     
                 # Determine No Sweet Challenge visual marker
                 if date_str in nosweet_dates:
@@ -2712,29 +2712,29 @@ async def handle_telegram_update(payload: dict):
                         nosweet_marker = "🥤 ⏳"
                     
                 report_lines.append(
-                    f"{day_short}៖ ញ៉ាំ {intake} | {left_str} | ដុត {burn} | {nosweet_marker}"
+                    f"{day_short}: Eaten {intake} | {left_str} | Burned {burn} | {nosweet_marker}"
                 )
             
             # Weekly overall calculations
             weekly_budget = goal * 7
             overall_left = weekly_budget - total_weekly_eaten
             if overall_left >= 0:
-                overall_left_str = f"សល់ <b>{overall_left}</b> Cal"
+                overall_left_str = f"remaining <b>{overall_left}</b> Cal"
             else:
-                overall_left_str = f"លើស <b>{-overall_left}</b> Cal"
+                overall_left_str = f"over <b>{-overall_left}</b> Cal"
                 
             weekly_report_text = (
-                "📅 <b>របាយការណ៍សង្ខេបប្រចាំសប្តាហ៍ (ច័ន្ទ - អាទិត្យ)</b>\n"
+                "📅 <b>Weekly Summary Report (Mon - Sun)</b>\n"
                 "━━━━━━━━━━━━━━━━━━━━\n"
-                f"🎯 <b>គោលដៅប្រចាំថ្ងៃ៖</b> <b>{goal}</b> Cal\n"
-                f"🗓️ <b>សប្តាហ៍បច្ចុប្បន្ន៖</b> <b>{start_date_str}</b> ដល់ <b>{end_date_str}</b>\n"
+                f"🎯 <b>Daily Goal:</b> <b>{goal}</b> Cal\n"
+                f"🗓️ <b>Current Week:</b> <b>{start_date_str}</b> to <b>{end_date_str}</b>\n"
                 "━━━━━━━━━━━━━━━━━━━━\n"
                 + "\n".join(report_lines) + "\n"
                 "━━━━━━━━━━━━━━━━━━━━\n"
-                "📊 <b>សរុបសប្តាហ៍នេះ៖</b>\n"
-                f"🍳 <b>ញ៉ាំសរុប៖</b> <b>{total_weekly_eaten}</b> / <b>{weekly_budget}</b> Cal\n"
-                f"⚖️ <b>ស្ថានភាព៖</b> {overall_left_str}\n"
-                f"🏃 <b>ដុតសរុប៖</b> <b>{total_weekly_burned}</b> Cal"
+                "📊 <b>Weekly Total:</b>\n"
+                f"🍳 <b>Total Consumed:</b> <b>{total_weekly_eaten}</b> / <b>{weekly_budget}</b> Cal\n"
+                f"⚖️ <b>Status:</b> {overall_left_str}\n"
+                f"🏃 <b>Total Burned:</b> <b>{total_weekly_burned}</b> Cal"
             )
             
             await bot.send_message(chat_id, weekly_report_text)
@@ -2743,18 +2743,18 @@ async def handle_telegram_update(payload: dict):
         elif text.startswith("/suggest") or text.startswith("/menu"):
             inline_keyboard = [
                 [
-                    {"text": "🥗 បន្លែច្រើន (High Veg)", "callback_data": "suggest_pref:veg"},
-                    {"text": "🥩 សាច់ច្រើន (High Meat)", "callback_data": "suggest_pref:meat"}
+                    {"text": "🥗 High Veg", "callback_data": "suggest_pref:veg"},
+                    {"text": "🥩 High Protein", "callback_data": "suggest_pref:meat"}
                 ],
                 [
-                    {"text": "🍲 ម្ហូបធម្មតា (Standard Khmer)", "callback_data": "suggest_pref:normal"}
+                    {"text": "🍲 Balanced", "callback_data": "suggest_pref:normal"}
                 ]
             ]
             await bot.send_message(
                 chat_id,
-                "💡 <b>ជ្រើសរើសប្រភេទមុខម្ហូបណែនាំដែលអ្នកចូលចិត្ត៖</b>\n"
+                "💡 <b>Select Your Preferred Food Style:</b>\n"
                 "━━━━━━━━━━━━━━━━━━━━\n"
-                "ខ្ញុំនឹងរៀបចំសំណើមុខម្ហូបប្រចាំថ្ងៃ ស្របតាមកម្រិតកាឡូរីរបស់អ្នក និងគ្រឿងផ្សំងាយស្រួលរកក្នុងផ្សារខ្មែរ!",
+                "I will prepare daily meal recommendations matching your calorie goals!",
                 reply_markup={"inline_keyboard": inline_keyboard}
             )
             return
@@ -2783,13 +2783,13 @@ async def handle_telegram_update(payload: dict):
                 else:
                     user_food_context = caption
                     
-        display_date = custom_date if custom_date else "ថ្ងៃនេះ"
+        display_date = custom_date if custom_date else "today"
         
         # Send initial premium loading visual to user immediately
         ack = await bot.send_message(
             chat_id, 
-            f"🔍 <i>កំពុងវិភាគរូបភាពអាហារសម្រាប់ {display_date}... សូមរង់ចាំមួយភ្លែត។</i>" if custom_date
-            else "🔍 <i>កំពុងវិភាគរូបភាពអាហាររបស់អ្នក... សូមរង់ចាំមួយភ្លែត។</i>"
+            f"🔍 <i>Analyzing meal image for {display_date}... Please wait.</i>" if custom_date
+            else "🔍 <i>Analyzing your food image... Please wait a moment.</i>"
         )
         ack_message_id = ack.get("result", {}).get("message_id")
 
@@ -2825,15 +2825,15 @@ async def handle_telegram_update(payload: dict):
             # Determine period of the day
             hour = now_cambodia.hour
             if 5 <= hour < 11:
-                period_kh = "ពេលព្រឹក (Morning)"
+                period_kh = "Morning"
             elif 11 <= hour < 14:
-                period_kh = "ពេលថ្ងៃត្រង់ (Lunch)"
+                period_kh = "Lunch"
             elif 14 <= hour < 17:
-                period_kh = "ពេលរសៀល (Afternoon)"
+                period_kh = "Afternoon"
             elif 17 <= hour < 22:
-                period_kh = "ពេលល្ងាច/យប់ (Evening/Night)"
+                period_kh = "Evening/Night"
             else:
-                period_kh = "ពេលយប់ជ្រៅ (Late Night)"
+                period_kh = "Late Night"
 
             profile = db_get_user_profile(user_id)
             if profile:
@@ -2854,14 +2854,14 @@ async def handle_telegram_update(payload: dict):
                 "nutritional details (calories in Cal, protein/fat/carbs/sugar in grams).\n"
                 f"User Health Context: {profile_context}\n"
                 f"Logging Context: {logging_time_context}\n"
-                "YOU MUST RESPOND ENTIRELY IN KHMER LANGUAGE. The `food_name` field must be written in beautiful Khmer script.\n"
+                "YOU MUST RESPOND ENTIRELY IN ENGLISH.\n"
                 "Provide a highly personalized coaching and health recommendation (in the `coaching_recommendation` field) "
-                "in Khmer tailored specifically to this user's profile, goal, and the logging context.\n"
+                "in English tailored specifically to this user's profile, goal, and the logging context.\n"
                 "CRITICAL SECRECY RULE: You know the user's age, weight, height, and calorie target budget from the User Health Context, BUT YOU MUST KEEP THEM SECRET. Never mention or repeat their age, weight, height, or daily calorie goal in your coaching_recommendation text response. Focus purely on qualitative health insights, digestion, macronutrients, and positive coaching advice.\n"
                 "Do NOT recite or repeat raw numbers (like '150 Cal' or '10g protein') inside the coaching recommendation text since those are already clearly displayed in the summary card.\n"
                 "If the image does not show any food, or you cannot identify any food, "
                 "you MUST set the `confidence_score` to less than 0.5 (e.g. 0.0 to 0.4), "
-                "and you can set the `food_name` to 'មិនមែនជាអាហារ ឬរកមិនឃើញ'. "
+                "and you can set the `food_name` to 'Non-food or unrecognized'. "
                 "Be realistic, objective, and estimate standard portion sizes for single servings unless "
                 "there's strong visual context stating otherwise."
             )
@@ -2900,10 +2900,10 @@ async def handle_telegram_update(payload: dict):
             # Check for non-food or low confidence edge cases
             if analysis.confidence_score < 0.5:
                 err_msg = (
-                    "🍳 <b>អូ! ខ្ញុំរកមិនឃើញអាហារទេ!</b>\n"
+                    "🍳 <b>Oops! No Food Detected!</b>\n"
                     "━━━━━━━━━━━━━━━━━━━━\n"
-                    "ខ្ញុំមិនសូវច្បាស់ថាវាជាអាហារនោះទេ។ សូមប្រាកដថារូបថតបង្ហាញពីអាហារបានច្បាស់ល្អ មានពន្លឺគ្រប់គ្រាន់ រួចផ្ញើមកម្តងទៀត!\n\n"
-                    f"<b>(រកឃើញ៖ {analysis.food_name} | កម្រិតច្បាស់លាស់៖ {analysis.confidence_score * 100:.0f}%)</b>"
+                    "I'm not sure this is a food item. Make sure the photo shows food clearly with good lighting and send again!\n\n"
+                    f"<b>(Detected: {analysis.food_name} | Confidence: {analysis.confidence_score * 100:.0f}%)</b>"
                 )
                 if ack_message_id:
                     await bot.edit_message(chat_id, ack_message_id, err_msg)
@@ -2926,7 +2926,7 @@ async def handle_telegram_update(payload: dict):
             goal = db_get_user_goal(user_id)
             remaining = goal - total_cals
             balance_emoji = "⚖️" if remaining >= 0 else "🚨"
-            remaining_str = f"សល់ <b>{remaining} Cal</b>" if remaining >= 0 else f"លើស <b>{-remaining} Cal</b>"
+            remaining_str = f"remaining <b>{remaining} Cal</b>" if remaining >= 0 else f"over <b>{-remaining} Cal</b>"
 
             # Format custom display date
             if custom_date:
@@ -2937,25 +2937,25 @@ async def handle_telegram_update(payload: dict):
 
             # Format the output beautifully using HTML tags
             result_card = (
-                "🍳 <b>លទ្ធផលវិភាគអាហារូបត្ថម្ភ</b>\n"
+                "🍳 <b>Nutritional Analysis Results</b>\n"
                 "━━━━━━━━━━━━━━━━━━━━\n"
-                f"🥗 <b>អាហារ៖</b> <b>{analysis.food_name}</b>\n"
-                f"📊 <b>ភាពជឿជាក់៖</b> <b>{analysis.confidence_score * 100:.0f}%</b>\n"
-                f"📅 <b>កាលបរិច្ឆេទ៖</b> <b>{formatted_display_date}</b>\n\n"
-                f"🔥 <b>ថាមពល៖</b> <b>{analysis.calories} Cal</b>\n"
+                f"🥗 <b>Food:</b> <b>{analysis.food_name}</b>\n"
+                f"📊 <b>Confidence:</b> <b>{analysis.confidence_score * 100:.0f}%</b>\n"
+                f"📅 <b>Date:</b> <b>{formatted_display_date}</b>\n\n"
+                f"🔥 <b>Energy:</b> <b>{analysis.calories} Cal</b>\n"
                 "━━━━━━━━━━━━━━━━━━━━\n"
-                f"🥩 <b>ប្រូតេអ៊ីន៖</b> <b>{analysis.protein}g</b>\n"
-                f"🧈 <b>ខ្លាញ់សរុប៖</b> <b>{analysis.fat}g</b>\n"
-                f"🍞 <b>កាបូអ៊ីដ្រាត៖</b> <b>{analysis.carbs}g</b>\n"
-                f"🍬 <b>ក្នុងនោះជាតិស្ករ៖</b> <b>{analysis.sugar}g</b>\n"
+                f"🥩 <b>Protein:</b> <b>{analysis.protein}g</b>\n"
+                f"🧈 <b>Total Fat:</b> <b>{analysis.fat}g</b>\n"
+                f"🍞 <b>Carbohydrates:</b> <b>{analysis.carbs}g</b>\n"
+                f"🍬 <b>Of which Sugars:</b> <b>{analysis.sugar}g</b>\n"
                 "━━━━━━━━━━━━━━━━━━━━\n"
-                f"🏃 <b>បានដុតរំលាយ៖</b> <b>{total_burn} Cal</b>\n"
-                f"{balance_emoji} <b>កាឡូរី ({display_date})៖</b> <b>{total_cals}</b> / <b>{goal} Cal</b> ({remaining_str})\n"
+                f"🏃 <b>Burned:</b> <b>{total_burn} Cal</b>\n"
+                f"{balance_emoji} <b>Calories ({display_date}):</b> <b>{total_cals}</b> / <b>{goal} Cal</b> ({remaining_str})\n"
                 "━━━━━━━━━━━━━━━━━━━━\n"
-                f"💡 <b>ការណែនាំពីគ្រូ៖</b>\n"
+                f"💡 <b>Coaching Advice:</b>\n"
                 f"« {analysis.coaching_recommendation} »\n"
                 "━━━━━━━━━━━━━━━━━━━━\n"
-                "💾 <b>បានកត់ត្រាចូលគណនីរួចរាល់! ប្រសិនបើចង់លុបកំណត់ត្រានេះវិញ សូមចុចប៊ូតុងខាងក្រោម៖</b>"
+                "💾 <b>Successfully logged! If you want to delete this log, click the button below:</b>"
             )
 
             # Define inline button to clear the meal log dynamically in Khmer
@@ -2963,7 +2963,7 @@ async def handle_telegram_update(payload: dict):
                 "inline_keyboard": [
                     [
                         {
-                            "text": "❌ លុបកំណត់ត្រានេះ",
+                            "text": "❌ Delete this log",
                             "callback_data": f"delete_meal:{inserted_meal_id}"
                         }
                     ]
@@ -2980,16 +2980,16 @@ async def handle_telegram_update(payload: dict):
             err_msg = str(e)
             if any(x in err_msg for x in ["429", "RESOURCE_EXHAUSTED", "LimitExceeded", "quota"]):
                 fail_msg = (
-                    "⚠️ <b>ការវិភាគអាហារូបត្ថម្ភបានបរាជ័យ</b>\n"
+                    "⚠️ <b>Nutritional Analysis Failed</b>\n"
                     "━━━━━━━━━━━━━━━━━━━━\n"
-                    "មានបញ្ហាបច្ចេកទេសមួយបានកើតឡើងក្នុងពេលដំណើរការវិភាគរូបភាពរបស់អ្នក។ សូមព្យាយាមម្តងទៀតនៅពេលក្រោយ។"
+                    "A technical error occurred while analyzing your image. Please try again later."
                 )
             else:
                 fail_msg = (
-                    "⚠️ <b>ការវិភាគអាហារូបត្ថម្ភបានបរាជ័យ</b>\n"
+                    "⚠️ <b>Nutritional Analysis Failed</b>\n"
                     "━━━━━━━━━━━━━━━━━━━━\n"
-                    "មានបញ្ហាបច្ចេកទេសមួយបានកើតឡើងក្នុងពេលដំណើរការវិភាគរូបភាពរបស់អ្នក។ សូមប្រាកដថាព័ត៌មានសម្ងាត់ Turso និង Gemini API ត្រូវបានកំណត់ត្រឹមត្រូវនៅលើ Vercel។\n\n"
-                    f"<b>ព័ត៌មានលម្អិត:</b> <code>{err_msg}</code>"
+                    "A technical error occurred while analyzing your image. Make sure Turso and Gemini credentials are set up on Vercel.\n\n"
+                    f"<b>Details:</b> <code>{err_msg}</code>"
                 )
             if ack_message_id:
                 await bot.edit_message(chat_id, ack_message_id, fail_msg)
@@ -3000,8 +3000,8 @@ async def handle_telegram_update(payload: dict):
         # Acknowledge unhandled update types safely
         await bot.send_message(
             chat_id,
-            "ℹ️ <b>រកឃើញតែប្រភេទរូបថតប៉ុណ្ណោះ!</b>\n"
-            "សូមផ្ញើរូបថត ឬឯកសាររូបភាពអាហាររបស់អ្នក ដើម្បីវិភាគតម្លៃអាហារូបត្ថម្ភ។"
+            "ℹ️ <b>Please send a photo!</b>\n"
+            "Please send a food photo or image file to analyze its nutrition facts."
         )
 
 # ---------------------------------------------------------
@@ -3176,7 +3176,7 @@ async def fetch_latest_strava_activity(user_id: int) -> dict:
             activities = resp.json()
             
             if not activities:
-                raise Exception("គ្មានសកម្មភាពលំហាត់ប្រាណដែលបានកត់ត្រាក្នុងរយៈពេល ៧ថ្ងៃចុងក្រោយនេះទេ! សូមកត់ត្រាការហាត់ប្រាណនៅលើកម្មវិធី Strava ជាមុនសិន។")
+                raise Exception("No workout activities logged in the last 7 days! Please log a workout on Strava first.")
             
             # Strava API returns activities descending (latest first), so index 0 is already the most recent activity
             latest_act = activities[0]
@@ -3186,17 +3186,17 @@ async def fetch_latest_strava_activity(user_id: int) -> dict:
             act_type = latest_act.get("type", "Workout")
             
             type_mappings = {
-                "Run": "រត់ (Running)",
-                "Ride": "ជិះកង់ (Biking)",
-                "Walk": "ដើរ (Walking)",
-                "Hike": "ដើរភ្នំ (Hiking)",
-                "Swim": "ហែលទឹក (Swimming)",
-                "WeightTraining": "លើកទម្ងន់ (Weight Lifting)",
-                "Workout": "ហាត់ប្រាណទូទៅ (Workout)",
-                "Yoga": "យូហ្គា (Yoga)",
-                "Elliptical": "ម៉ាស៊ីន Elliptical"
+                "Run": "Running",
+                "Ride": "Biking",
+                "Walk": "Walking",
+                "Hike": "Hiking",
+                "Swim": "Swimming",
+                "WeightTraining": "Weight Lifting",
+                "Workout": "Workout",
+                "Yoga": "Yoga",
+                "Elliptical": "Elliptical"
             }
-            act_name = type_mappings.get(act_type, f"ហាត់ប្រាណ {act_type}")
+            act_name = type_mappings.get(act_type, f"Workout {act_type}")
             
             # Extract duration in minutes
             duration_minutes = int(latest_act.get("moving_time", 0) / 60.0)
@@ -3374,27 +3374,27 @@ async def fetch_fit_exercises_today(user_id: int) -> list[dict]:
             exercises = []
             
             activity_names = {
-                1: "ជិះកង់ (Biking)",
-                2: "ហាត់ប្រាណ Calisthenics",
-                7: "ដើរ (Walking)",
-                8: "រត់ (Running)",
-                9: "អេរ៉ូប៊ិក (Aerobics)",
-                10: "វាយសី (Badminton)",
-                11: "បេស្បល (Baseball)",
-                12: "បាល់បោះ (Basketball)",
-                20: "ប្រដាល់ (Boxing)",
-                24: "រាំ (Dancing)",
-                31: "ធ្វើសួន (Gardening)",
-                32: "វាយកូនហ្គោល (Golf)",
-                35: "ដើរភ្នំ (Hiking)",
-                53: "អុំទូក (Rowing)",
-                58: "រត់លើម៉ាស៊ីន (Treadmill Running)",
-                97: "លើកទម្ងន់ (Weight Lifting)",
-                100: "ហែលទឹក (Swimming)",
-                108: "ហាត់ប្រាណទូទៅ (Workout)",
-                113: "ហាត់ប្រាណ Fitness",
-                114: "យូហ្គា (Yoga)",
-                115: "ម៉ាស៊ីន Elliptical",
+                1: "Cycling (Biking)",
+                2: "Calisthenics",
+                7: "Walking",
+                8: "Running",
+                9: "Aerobics",
+                10: "Badminton",
+                11: "Baseball",
+                12: "Basketball",
+                20: "Boxing",
+                24: "Dancing",
+                31: "Gardening",
+                32: "Golf",
+                35: "Hiking",
+                53: "Rowing",
+                58: "Treadmill Running",
+                97: "Weight Lifting",
+                100: "Swimming",
+                108: "Workout",
+                113: "Fitness",
+                114: "Yoga",
+                115: "Elliptical",
                 116: "Zumba"
             }
             
@@ -3458,30 +3458,30 @@ async def fetch_latest_fit_session(user_id: int) -> dict:
             sessions = data.get("session", [])
             
             if not sessions:
-                raise Exception("Google Fit returned 0 sessions in the last 7 days. Please make sure you have pulled down to refresh on the Google Fit app's Journal tab to force a sync.")
+                raise Exception("Google Fit returned 0 sessions in the last 7 days. Make sure you have synced the Google Fit app.")
                 
             activity_names = {
-                1: "ជិះកង់ (Biking)",
-                2: "ហាត់ប្រាណ Calisthenics",
-                7: "ដើរ (Walking)",
-                8: "រត់ (Running)",
-                9: "អេរ៉ូប៊ិក (Aerobics)",
-                10: "វាយសី (Badminton)",
-                11: "បេស្បល (Baseball)",
-                12: "បាល់បោះ (Basketball)",
-                20: "ប្រដាល់ (Boxing)",
-                24: "រាំ (Dancing)",
-                31: "ធ្វើសួន (Gardening)",
-                32: "វាយកូនហ្គោល (Golf)",
-                35: "ដើរភ្នំ (Hiking)",
-                53: "អុំទូក (Rowing)",
-                58: "រត់លើម៉ាស៊ីន (Treadmill Running)",
-                97: "លើកទម្ងន់ (Weight Lifting)",
-                100: "ហែលទឹក (Swimming)",
-                108: "ហាត់ប្រាណទូទៅ (Workout)",
-                113: "ហាត់ប្រាណ Fitness",
-                114: "យូហ្គា (Yoga)",
-                115: "ម៉ាស៊ីន Elliptical",
+                1: "Cycling (Biking)",
+                2: "Calisthenics",
+                7: "Walking",
+                8: "Running",
+                9: "Aerobics",
+                10: "Badminton",
+                11: "Baseball",
+                12: "Basketball",
+                20: "Boxing",
+                24: "Dancing",
+                31: "Gardening",
+                32: "Golf",
+                35: "Hiking",
+                53: "Rowing",
+                58: "Treadmill Running",
+                97: "Weight Lifting",
+                100: "Swimming",
+                108: "Workout",
+                113: "Fitness",
+                114: "Yoga",
+                115: "Elliptical",
                 116: "Zumba"
             }
             
@@ -3614,7 +3614,7 @@ async def fit_callback(code: str, state: str):
     from fastapi.responses import HTMLResponse, RedirectResponse
     
     if not code or not state:
-        return HTMLResponse(content="<h2>❌ Parameter មិនត្រឹមត្រូវ!</h2>", status_code=400)
+        return HTMLResponse(content="<h2>❌ Invalid Parameters!</h2>", status_code=400)
         
     url = "https://oauth2.googleapis.com/token"
     payload = {
@@ -3757,18 +3757,18 @@ async def fit_callback(code: str, state: str):
                             <div class="icon-bg"></div>
                             <div class="success-icon">🎉</div>
                         </div>
-                        <h1>Google Fit ភ្ជាប់បានជោគជ័យ!</h1>
-                        <p>គណនី NutriBot របស់អ្នកឥឡូវនេះត្រូវបានភ្ជាប់ទៅកាន់ Google Fit រួចរាល់ហើយ។ អ្នកអាចបិទទំព័រនេះ និងត្រឡប់ទៅកាន់ Telegram Bot វិញដើម្បីបន្តប្រើប្រាស់។</p>
-                        <button class="btn" onclick="window.close()">រួចរាល់</button>
+                        <h1>Google Fit Connected!</h1>
+                        <p>Your NutriBot account is now successfully connected to Google Fit. You can close this page and return to Telegram Bot to continue.</p>
+                        <button class="btn" onclick="window.close()">Done</button>
                     </div>
                 </body>
                 </html>
                 """
                 return HTMLResponse(content=success_html)
             else:
-                return HTMLResponse(content=f"<h2>❌ ការដោះដូរ Token បានបរាជ័យ!</h2><p>{resp.text}</p>", status_code=500)
+                return HTMLResponse(content=f"<h2>❌ Token Exchange Failed!</h2><p>{resp.text}</p>", status_code=500)
     except Exception as e:
-        return HTMLResponse(content=f"<h2>❌ កំហុសបច្ចេកទេស!</h2><p>{str(e)}</p>", status_code=500)
+        return HTMLResponse(content=f"<h2>❌ Technical Error!</h2><p>{str(e)}</p>", status_code=500)
 
 # ---------------------------------------------------------
 # Strava OAuth Endpoints
@@ -3810,7 +3810,7 @@ async def strava_callback(code: str, state: str, scope: str = None):
     from fastapi.responses import HTMLResponse
     
     if not code or not state:
-        return HTMLResponse(content="<h2>❌ Parameter មិនត្រឹមត្រូវ!</h2>", status_code=400)
+        return HTMLResponse(content="<h2>❌ Invalid Parameters!</h2>", status_code=400)
         
     url = "https://www.strava.com/oauth/token"
     payload = {
@@ -3839,10 +3839,10 @@ async def strava_callback(code: str, state: str, scope: str = None):
                 try:
                     await bot.send_message(
                         user_id,
-                        "🎉 <b>ភ្ជាប់គណនីជាមួយ Strava ជោគជ័យ! (Connected)</b>\n"
+                        "🎉 <b>Connected to Strava successfully!</b>\n"
                         "━━━━━━━━━━━━━━━━━━━━\n"
-                        "គណនី Strava របស់អ្នកត្រូវបានភ្ជាប់ទៅកាន់ NutriBot រួចរាល់ហើយ!\n\n"
-                        "👉 វាយបញ្ជា៖ <b>/burn</b> ដើម្បីទាញយកសកម្មភាពហាត់ប្រាណចុងក្រោយរបស់អ្នកពី Strava មកកត់ត្រាក្នុង NutriBot ភ្លាមៗ!"
+                        "Your Strava account is now connected to NutriBot!\n\n"
+                        "👉 Type: <b>/burn</b> to fetch your latest exercise session from Strava immediately!"
                     )
                 except Exception as tg_err:
                     print(f"Failed to send Strava Telegram confirmation to user {user_id}: {tg_err}")
@@ -3961,18 +3961,18 @@ async def strava_callback(code: str, state: str, scope: str = None):
                             <div class="icon-bg"></div>
                             <div class="success-icon">🍊</div>
                         </div>
-                        <h1>Strava ភ្ជាប់បានជោគជ័យ!</h1>
-                        <p>គណនី NutriBot របស់អ្នកឥឡូវនេះត្រូវបានភ្ជាប់ទៅកាន់ Strava រួចរាល់ហើយ។ អ្នកអាចបិទទំព័រនេះ និងត្រឡប់ទៅកាន់ Telegram Bot វិញដើម្បីបន្តប្រើប្រាស់。</p>
-                        <button class="btn" onclick="window.close()">រួចរាល់</button>
+                        <h1>Strava Connected!</h1>
+                        <p>Your NutriBot account is now connected to Strava. You can close this page and return to the Telegram Bot.</p>
+                        <button class="btn" onclick="window.close()">Done</button>
                     </div>
                 </body>
                 </html>
                 """
                 return HTMLResponse(content=success_html)
             else:
-                return HTMLResponse(content=f"<h2>❌ ការដោះដូរ Token បានបរាជ័យ!</h2><p>{resp.text}</p>", status_code=500)
+                return HTMLResponse(content=f"<h2>❌ Token Exchange Failed!</h2><p>{resp.text}</p>", status_code=500)
     except Exception as e:
-        return HTMLResponse(content=f"<h2>❌ កំហុសបច្ចេកទេស!</h2><p>{str(e)}</p>", status_code=500)
+        return HTMLResponse(content=f"<h2>❌ Technical Error!</h2><p>{str(e)}</p>", status_code=500)
 
 # ---------------------------------------------------------
 # FastAPI Endpoints
@@ -4053,9 +4053,9 @@ async def vercel_cron_reminders(request: Request):
     failed_count = 0
     
     reminder_message = (
-        "🔔 <b>រំលឹកកត់ត្រាអាហារ!</b>\n"
+        "🔔 <b>Meal Recording Reminder!</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        "កុំភ្លេចកត់ត្រារបបអាហាររបស់អ្នកថ្ងៃនេះណា! សូមផ្ញើរូបភាពអាហារ ឬសរសេររៀបរាប់ពីអ្វីដែលអ្នកបានញ៉ាំមកខ្ញុំឥឡូវនេះ។"
+        "Don't forget to log your meals today! Send a food photo or write what you ate right now."
     )
     
     for uid in user_ids:
@@ -4141,17 +4141,17 @@ async def fetch_specific_strava_activity(user_id: int, activity_id: int) -> dict
             act_type = act.get("type", "Workout")
             
             type_mappings = {
-                "Run": "រត់ (Running)",
-                "Ride": "ជិះកង់ (Biking)",
-                "Walk": "ដើរ (Walking)",
-                "Hike": "ដើរភ្នំ (Hiking)",
-                "Swim": "ហែលទឹក (Swimming)",
-                "WeightTraining": "លើកទម្ងន់ (Weight Lifting)",
-                "Workout": "ហាត់ប្រាណទូទៅ (Workout)",
-                "Yoga": "យូហ្គា (Yoga)",
-                "Elliptical": "ម៉ាស៊ីន Elliptical"
+                "Run": "Running",
+                "Ride": "Biking",
+                "Walk": "Walking",
+                "Hike": "Hiking",
+                "Swim": "Swimming",
+                "WeightTraining": "Weight Lifting",
+                "Workout": "Workout",
+                "Yoga": "Yoga",
+                "Elliptical": "Elliptical"
             }
-            act_name = type_mappings.get(act_type, f"ហាត់ប្រាណ {act_type}")
+            act_name = type_mappings.get(act_type, f"Workout {act_type}")
             
             # Extract duration in minutes
             duration_minutes = int(act.get("moving_time", 0) / 60.0)
@@ -4325,31 +4325,31 @@ async def strava_webhook_event(request: Request):
                         if activity_date and activity_date != today_str:
                             date_parts = activity_date.split('-')
                             formatted_display_date = f"{date_parts[2]}-{date_parts[1]}-{date_parts[0]}"
-                            display_day = f"ថ្ងៃ {formatted_display_date}"
+                            display_day = f"on {formatted_display_date}"
                             yesterday_str = (now_kh - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
                             if activity_date == yesterday_str:
-                                display_day = "ម្សិលមិញ"
+                                display_day = "Yesterday"
                                 
                             success_card = (
-                                "⚡ <b>លំហាត់ប្រាណត្រូវបាន Sync ស្វ័យប្រវត្តពី Strava!</b>\n"
+                                "⚡ <b>Workout Synced Automatically from Strava!</b>\n"
                                 "━━━━━━━━━━━━━━━━━━━━\n"
-                                f"🚴 <b>សកម្មភាព៖</b> <b>{session['activity_name']}</b> ({session['session_name']})\n"
-                                f"🔥 <b>ដុតកាឡូរី៖</b> <b>{session['calories']} Cal</b>\n"
-                                f"⏲ <b>ពេលវេលា៖</b> <b>{session['duration']} នាទី</b>\n"
-                                f"🗾 <b>ចម្ងាយ៖</b> <b>{session['distance']} គីឡូម៉ែត្រ</b>\n"
+                                f"🚴 <b>Activity:</b> <b>{session['activity_name']}</b> ({session['session_name']})\n"
+                                f"🔥 <b>Calories Burned:</b> <b>{session['calories']} Cal</b>\n"
+                                f"⏲ <b>Duration:</b> <b>{session['duration']} mins</b>\n"
+                                f"🗾 <b>Distance:</b> <b>{session['distance']} km</b>\n"
                                 "━━━━━━━━━━━━━━━━━━━━\n"
-                                f"លំហាត់ប្រាណថ្មីរបស់អ្នក ត្រូវបានបញ្ចូលទៅក្នុងកំណត់ត្រា <b>{display_day}</b> ដោយស្វ័យប្រវត្ត! 💪"
+                                f"Your new workout was automatically added to your burned logs for <b>{display_day}</b>! 💪"
                             )
                         else:
                             success_card = (
-                                "⚡ <b>លំហាត់ប្រាណត្រូវបាន Sync ស្វ័យប្រវត្តពី Strava!</b>\n"
+                                "⚡ <b>Workout Synced Automatically from Strava!</b>\n"
                                 "━━━━━━━━━━━━━━━━━━━━\n"
-                                f"🚴 <b>សកម្មភាព៖</b> <b>{session['activity_name']}</b> ({session['session_name']})\n"
-                                f"🔥 <b>ដុតកាឡូរី៖</b> <b>{session['calories']} Cal</b>\n"
-                                f"⏲ <b>ពេលវេលា៖</b> <b>{session['duration']} នាទី</b>\n"
-                                f"🗾 <b>ចម្ងាយ៖</b> <b>{session['distance']} គីឡូម៉ែត្រ</b>\n"
+                                f"🚴 <b>Activity:</b> <b>{session['activity_name']}</b> ({session['session_name']})\n"
+                                f"🔥 <b>Calories Burned:</b> <b>{session['calories']} Cal</b>\n"
+                                f"⏲ <b>Duration:</b> <b>{session['duration']} mins</b>\n"
+                                f"🗾 <b>Distance:</b> <b>{session['distance']} km</b>\n"
                                 "━━━━━━━━━━━━━━━━━━━━\n"
-                                "លំហាត់ប្រាណថ្មីរបស់អ្នក ត្រូវបានបញ្ចូលទៅក្នុងកំណត់ត្រាថ្ងៃនេះដោយស្វ័យប្រវត្ត! 💪"
+                                "Your new workout was automatically added to today's burned logs! 💪"
                             )
                         await bot.send_message(user_id, success_card)
                         print(f"Successfully auto-synced webhook activity {activity_id} for user {user_id}")
@@ -4509,14 +4509,14 @@ async def tma_add_meal(req: TMAMealRequest):
         "nutritional details (calories in Cal, protein/fat/carbs/sugar in grams).\n"
         f"User Health Context: {profile_context}\n"
         f"Logging Context: {logging_time_context}\n"
-        "YOU MUST RESPOND ENTIRELY IN KHMER LANGUAGE. The `food_name` field must be written in beautiful Khmer script.\n"
+        "YOU MUST RESPOND ENTIRELY IN ENGLISH.\n"
         "Provide a highly personalized coaching and health recommendation (in the `coaching_recommendation` field) "
-        "in Khmer tailored specifically to this user's profile, goal, and the logging context.\n"
+        "in English tailored specifically to this user's profile, goal, and the logging context.\n"
         "CRITICAL SECRECY RULE: You know the user's age, weight, height, and calorie target budget from the User Health Context, BUT YOU MUST KEEP THEM SECRET. Never mention or repeat their age, weight, height, or daily calorie goal in your coaching_recommendation text response. Focus purely on qualitative health insights, digestion, macronutrients, and advice.\n"
         "Do NOT recite or repeat raw numbers (like '150 Cal' or '10g protein') inside the coaching recommendation text.\n"
         "If the text does not describe any food, or you cannot identify any food, "
         "you MUST set the `confidence_score` to less than 0.5 (e.g. 0.0 to 0.4), "
-        "and you can set the `food_name` to 'មិនមែនជាអាហារ ឬរកមិនឃើញ'."
+        "and you can set the `food_name` to 'not food or not found'."
     )
     
     response = None
@@ -4539,13 +4539,13 @@ async def tma_add_meal(req: TMAMealRequest):
     if not response:
         combined_errors = "; ".join(errors)
         if any(x in combined_errors for x in ["429", "RESOURCE_EXHAUSTED", "LimitExceeded", "quota"]):
-            return {"ok": False, "error": "មានបញ្ហាបច្ចេកទេសមួយបានកើតឡើងក្នុងពេលដំណើរការវិភាគការពណ៌នារបស់អ្នក។ សូមព្យាយាមម្តងទៀតនៅពេលក្រោយ។"}
+            return {"ok": False, "error": "A technical error occurred while analyzing your food description. Please try again later."}
         return {"ok": False, "error": f"Gemini Error list: {combined_errors}"}
         
     try:
         analysis = FoodAnalysis.model_validate_json(response.text)
         if analysis.confidence_score < 0.5:
-            return {"ok": False, "error": "រកមិនឃើញអាហារ ឬបរិមាណមិនច្បាស់លាស់។"}
+            return {"ok": False, "error": "Food not found or description is unclear."}
             
         inserted_meal_id = db_add_meal(req.user_id, analysis, req.custom_date)
         return {
@@ -4609,15 +4609,15 @@ async def tma_add_meal_photo(req: TMAMealPhotoRequest):
     
     hour = now_cambodia.hour
     if 5 <= hour < 11:
-        period_kh = "ពេលព្រឹក (Morning)"
+        period_kh = "Morning"
     elif 11 <= hour < 14:
-        period_kh = "ពេលថ្ងៃត្រង់ (Lunch)"
+        period_kh = "Lunch"
     elif 14 <= hour < 17:
-        period_kh = "ពេលរសៀល (Afternoon)"
+        period_kh = "Afternoon"
     elif 17 <= hour < 22:
-        period_kh = "ពេលល្ងាច/យប់ (Evening/Night)"
+        period_kh = "Evening/Night"
     else:
-        period_kh = "ពេលយប់ជ្រៅ (Late Night)"
+        period_kh = "Late Night"
 
     logging_time_context = f"Current Cambodia local time is {time_str} on {day_name} ({period_kh})."
     if req.custom_date:
@@ -4628,14 +4628,14 @@ async def tma_add_meal_photo(req: TMAMealPhotoRequest):
         "nutritional details (calories in Cal, protein/fat/carbs/sugar in grams).\n"
         f"User Health Context: {profile_context}\n"
         f"Logging Context: {logging_time_context}\n"
-        "YOU MUST RESPOND ENTIRELY IN KHMER LANGUAGE. The `food_name` field must be written in beautiful Khmer script.\n"
+        "YOU MUST RESPOND ENTIRELY IN ENGLISH.\n"
         "Provide a highly personalized coaching and health recommendation (in the `coaching_recommendation` field) "
-        "in Khmer tailored specifically to this user's profile, goal, and the logging context.\n"
+        "in English tailored specifically to this user's profile, goal, and the logging context.\n"
         "CRITICAL SECRECY RULE: You know the user's age, weight, height, and calorie target budget from the User Health Context, BUT YOU MUST KEEP THEM SECRET. Never mention or repeat their age, weight, height, or daily calorie goal in your coaching_recommendation text response. Focus purely on qualitative health insights, digestion, macronutrients, and positive coaching advice.\n"
         "Do NOT recite or repeat raw numbers (like '150 Cal' or '10g protein') inside the coaching recommendation text since those are already clearly displayed in the summary card.\n"
         "If the image does not show any food, or you cannot identify any food, "
         "you MUST set the `confidence_score` to less than 0.5 (e.g. 0.0 to 0.4), "
-        "and you can set the `food_name` to 'មិនមែនជាអាហារ ឬរកមិនឃើញ'. "
+        "and you can set the `food_name` to 'Non-food or unrecognized'. "
         "Be realistic, objective, and estimate standard portion sizes for single servings unless "
         "there's strong visual context stating otherwise."
     )
@@ -4663,13 +4663,13 @@ async def tma_add_meal_photo(req: TMAMealPhotoRequest):
     if not response:
         combined_errors = "; ".join(errors)
         if any(x in combined_errors for x in ["429", "RESOURCE_EXHAUSTED", "LimitExceeded", "quota"]):
-            return {"ok": False, "error": "មានបញ្ហាបច្ចេកទេសមួយបានកើតឡើងក្នុងពេលដំណើរការវិភាគរូបភាពរបស់អ្នក។ សូមព្យាយាមម្តងទៀតនៅពេលក្រោយ។"}
+            return {"ok": False, "error": "A technical error occurred while analyzing your image. Please try again later."}
         return {"ok": False, "error": f"Gemini Error list: {combined_errors}"}
         
     try:
         analysis = FoodAnalysis.model_validate_json(response.text)
         if analysis.confidence_score < 0.5:
-            return {"ok": False, "error": "រកមិនឃើញអាហារ ឬបរិមាណមិនច្បាស់លាស់នៅក្នុងរូបភាព។"}
+            return {"ok": False, "error": "Food not found or portion is unclear in the image."}
             
         return {
             "ok": True,
@@ -4698,7 +4698,7 @@ class TMABurnRequest(BaseModel):
 async def tma_add_burn(req: TMABurnRequest):
     try:
         if req.calories <= 0 or req.calories > 10000:
-            return {"ok": False, "error": "កាឡូរីមិនត្រឹមត្រូវ។"}
+            return {"ok": False, "error": "Invalid calories."}
             
         db_add_burn(req.user_id, req.calories, req.activity_name, 'Manual', req.custom_date)
         return {"ok": True}
@@ -4863,13 +4863,13 @@ async def tma_get_weekly(user_id: int, start_date: Optional[str] = None, end_dat
     
     days_data = []
     day_names_kh = {
-        0: "ច័ន្ទ",
-        1: "អង្គារ",
-        2: "ពុធ",
-        3: "ព្រហស្បតិ៍",
-        4: "សុក្រ",
-        5: "សៅរ៍",
-        6: "អាទិត្យ"
+        0: "Mon",
+        1: "Tue",
+        2: "Wed",
+        3: "Thu",
+        4: "Fri",
+        5: "Sat",
+        6: "Sun"
     }
     day_names_en = {
         0: "Mon",
@@ -5003,7 +5003,7 @@ async def tma_add_custom_meal(req: TMACustomMealRequest):
             carbs=req.carbs,
             sugar=req.sugar,
             confidence_score=1.0,
-            coaching_recommendation="បន្ថែមដោយផ្ទាល់ពីការស្វែងរក"
+            coaching_recommendation="Added directly from search"
         )
         inserted_id = db_add_meal(req.user_id, analysis, req.custom_date)
         return {"ok": True, "meal_id": inserted_id}
@@ -5027,9 +5027,9 @@ async def tma_search_food(user_id: int, query: str):
         "You are a professional nutrition expert and calorie dictionary. Estimate the average nutritional facts "
         "for a standard normal single serving portion of the food queried by the user.\n"
         "The output must include estimated calories in Cal, and protein, fat, carbs, sugar in grams.\n"
-        "YOU MUST RESPOND ENTIRELY IN KHMER. The `food_name` field must be written in beautiful Khmer script.\n"
+        "YOU MUST RESPOND ENTIRELY IN ENGLISH.\n"
         "Provide a useful brief coaching advice recommendation (in the `coaching_recommendation` field) "
-        "in Khmer explaining the health benefits, macro distribution, or typical portion sizing of this item.\n"
+        "in English explaining the health benefits, macro distribution, or typical portion sizing of this item.\n"
         "If the query is not a food item or you cannot find it, set `confidence_score` below 0.5."
     )
     
@@ -5053,13 +5053,13 @@ async def tma_search_food(user_id: int, query: str):
     if not response:
         combined_errors = "; ".join(errors)
         if any(x in combined_errors for x in ["429", "RESOURCE_EXHAUSTED", "LimitExceeded", "quota"]):
-            return {"ok": False, "error": "មានបញ្ហាបច្ចេកទេសមួយបានកើតឡើងក្នុងពេលដំណើរការវិភាគការពណ៌នារបស់អ្នក។ សូមព្យាយាមម្តងទៀតនៅពេលក្រោយ។"}
+            return {"ok": False, "error": "A technical error occurred while analyzing your food description. Please try again later."}
         return {"ok": False, "error": f"Gemini Error list: {combined_errors}"}
 
     try:
         analysis = FoodAnalysis.model_validate_json(response.text)
         if analysis.confidence_score < 0.5:
-            return {"ok": False, "error": "រកមិនឃើញអាហារ ឬព័ត៌មានមិនច្បាស់លាស់។"}
+            return {"ok": False, "error": "Food not found or invalid description."}
             
         return {
             "ok": True,
